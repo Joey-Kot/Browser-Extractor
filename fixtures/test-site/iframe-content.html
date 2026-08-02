@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>iframe content fixture</title>
+  </head>
+  <body>
+    <article data-frame-content="true">
+      <h2 id="frame-section">Frame article</h2>
+      <a href="./article.html">Frame-relative link</a>
+      <a href="#frame-section">Frame-local fragment link</a>
+      <frame-shadow></frame-shadow>
+    </article>
+    <script>
+      customElements.define(
+        "frame-shadow",
+        class extends HTMLElement {
+          connectedCallback() {
+            this.attachShadow({ mode: "open" }).innerHTML =
+              "<p>Shadow content inside iframe</p>";
+          }
+        }
+      );
+    </script>
+  </body>
+</html>

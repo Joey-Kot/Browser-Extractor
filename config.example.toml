@@ -1,0 +1,30 @@
+[server]
+listen = "127.0.0.1:17320"
+api_token = ""
+allow_cors = true
+
+[bridge]
+listen = "127.0.0.1:17321"
+extension_token = ""
+browser_instance_id = ""
+ping_interval_seconds = 20
+
+[executor]
+max_concurrency = 10
+max_conversion_concurrency = 4
+max_queue_size = 1000
+job_timeout_ms = 120000
+cleanup_timeout_ms = 10000
+
+[capture]
+chunk_bytes = 262144
+max_result_bytes = 33554432
+max_total_inflight_bytes = 268435456
+max_unacked_chunks = 8
+
+[jobs]
+result_ttl_seconds = 600
+max_completed_jobs = 1000
+
+[conversion]
+renderer = "htmd"

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <title>一篇用于转换测试的文章</title>
+    <link rel="stylesheet" href="assets/site.css">
+    <style>.inline-style-should-disappear { color: red; }</style>
+  </head>
+  <body>
+    <nav aria-label="site navigation"><a href="index.html">返回首页</a></nav>
+    <main>
+      <article>
+        <h1>一篇用于转换测试的文章</h1>
+        <p>这段正文包含一个<a href="/relative-link">相对链接</a>和一张带替代文本的图片。</p>
+        <img src="assets/example.png" alt="示例图片（文件可以不存在）">
+        <h2>结构</h2>
+        <ul>
+          <li>无序列表第一项</li>
+          <li>无序列表第二项</li>
+        </ul>
+        <blockquote>正文提取应保留引用结构。</blockquote>
+        <pre><code class="language-rust">fn main() {
+    println!("hello");
+}</code></pre>
+        <table>
+          <thead><tr><th>字段</th><th>值</th></tr></thead>
+          <tbody><tr><td>mode</td><td>document</td></tr></tbody>
+        </table>
+      </article>
+      <aside>这段侧栏可由 excludeSelectors 删除。</aside>
+    </main>
+    <script>window.fixtureScriptRan = true;</script>
+  </body>
+</html>
+

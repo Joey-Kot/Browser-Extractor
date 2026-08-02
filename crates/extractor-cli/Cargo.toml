@@ -1,0 +1,29 @@
+[package]
+name = "extractor-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "extractor_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "scrape"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+extractor-daemon = { path = "../extractor-daemon" }

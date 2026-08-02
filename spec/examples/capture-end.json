@@ -1,0 +1,13 @@
+{
+  "version": 4,
+  "type": "capture_end",
+  "requestId": "55373e17-99fa-472c-8406-35b08a82a919",
+  "payload": {
+    "chunks": 1,
+    "totalBytes": 35,
+    "checksum": "79756042e572554530dbf6f75570f99f2f67880730b87f01d774cf93fdec1f83",
+    "scrollRounds": 1,
+    "matchedItems": 1,
+    "warnings": []
+  }
+}

@@ -1,0 +1,406 @@
+openapi: 3.1.0
+info:
+  title: Browser Extractor API
+  version: 0.1.0
+  description: >
+    Local HTTP API that schedules extraction work in the user's authenticated
+    Chrome profile through the companion extension.
+servers:
+  - url: http://127.0.0.1:17320
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      security: []
+      operationId: getHealth
+      responses:
+        "200":
+          description: Daemon process is running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /v1/bridge/status:
+    get:
+      operationId: getBridgeStatus
+      responses:
+        "200":
+          description: Current extension connection and scheduler status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/extractions:
+    post:
+      operationId: createExtraction
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            maxLength: 256
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExtractionRequest"
+      responses:
+        "200":
+          description: Extraction completed within waitMs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Extraction"
+        "202":
+          description: Extraction is still queued or running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Extraction"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/QueueFull"
+        "503":
+          $ref: "#/components/responses/BrowserUnavailable"
+  /v1/extractions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getExtraction
+      responses:
+        "200":
+          description: Current extraction state or retained result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Extraction"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: cancelExtraction
+      responses:
+        "200":
+          description: Current terminal state, or cancellation has been requested.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Extraction"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  responses:
+    BadRequest:
+      description: Invalid request.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Missing or invalid API token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    QueueFull:
+      description: Scheduler queue is full.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    BrowserUnavailable:
+      description: No compatible extension is connected.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Job does not exist or its retained result expired.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    Health:
+      type: object
+      required: [status, version]
+      properties:
+        status:
+          const: ok
+        version:
+          type: string
+    BridgeStatus:
+      type: object
+      required:
+        - extensionConnected
+        - activeBrowserJobs
+        - queuedJobs
+        - maxConcurrency
+        - inflightBytes
+      properties:
+        extensionConnected:
+          type: boolean
+        browserInstanceId:
+          type: [string, "null"]
+        extensionVersion:
+          type: [string, "null"]
+        activeBrowserJobs:
+          type: integer
+          minimum: 0
+        queuedJobs:
+          type: integer
+          minimum: 0
+        maxConcurrency:
+          type: integer
+          minimum: 1
+        inflightBytes:
+          type: integer
+          minimum: 0
+    ExtractionRequest:
+      type: object
+      additionalProperties: false
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+        mode:
+          $ref: "#/components/schemas/ExtractionMode"
+          default: document
+        waitMs:
+          type: integer
+          minimum: 0
+          default: 30000
+        jobTimeoutMs:
+          type: integer
+          minimum: 1
+          default: 120000
+        loadTimeoutMs:
+          type: integer
+          minimum: 1
+          default: 30000
+          description: >
+            Timeout applied separately to navigation, waitForSelector, and each
+            nested traversal capture. The remaining job deadline is always an
+            additional upper bound.
+        settleMs:
+          type: integer
+          minimum: 0
+          default: 1000
+        visibilityMode:
+          enum: [background, foreground, auto]
+          default: background
+        waitForSelector:
+          type: [string, "null"]
+        includeSelectors:
+          type: array
+          items:
+            type: string
+          default: [body]
+          description: >
+            Content roots in both modes. In feed mode these roots also bound
+            automatic content-block inference and internal scroll-container
+            discovery. Omitted or empty arrays are normalized to [body]. Any
+            explicit selector set must match at least one top-level document
+            element; there is no fallback to body.
+        excludeSelectors:
+          type: array
+          items:
+            type: string
+          default: []
+        traversal:
+          $ref: "#/components/schemas/TraversalOptions"
+        scroll:
+          $ref: "#/components/schemas/ScrollOptions"
+        output:
+          $ref: "#/components/schemas/OutputOptions"
+    ExtractionMode:
+      enum: [document, feed]
+    TraversalOptions:
+      type: object
+      additionalProperties: false
+      description: >
+        Optional recursive serialization after all selectors have run in the
+        top-level document. Selectors, waits, settling, and scrolling never run
+        inside nested roots or documents.
+      properties:
+        shadowDom:
+          $ref: "#/components/schemas/TraversalTargetOptions"
+        iframes:
+          $ref: "#/components/schemas/TraversalTargetOptions"
+      default: {}
+    TraversalTargetOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+          default: false
+        maxDepth:
+          type: integer
+          minimum: 1
+          default: 3
+      default: {}
+    ScrollOptions:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+          description: Must be true in feed mode; enables pre-capture scrolling in document mode.
+        maxDistancePx:
+          type: integer
+          minimum: 1
+          default: 60000
+          description: >
+            Maximum cumulative distance traveled by each automatically
+            detected vertical scroll container.
+        settleMs:
+          type: integer
+          minimum: 0
+          default: 700
+        dedupe:
+          $ref: "#/components/schemas/DedupeOptions"
+          default: {}
+    DedupeOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        strategy:
+          enum: [auto, attribute, link, html_hash]
+          default: auto
+        attribute:
+          type: [string, "null"]
+        selector:
+          type: [string, "null"]
+    OutputOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        includeHtml:
+          type: boolean
+          default: false
+    Extraction:
+      type: object
+      required:
+        - id
+        - status
+        - cleanupStatus
+        - requestedUrl
+        - stats
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          enum:
+            - queued
+            - dispatched
+            - creating_tab
+            - navigating
+            - waiting
+            - collecting
+            - receiving
+            - closing
+            - converting
+            - completed
+            - failed
+            - cancelled
+            - timed_out
+        cleanupStatus:
+          enum:
+            - not_started
+            - cleaning
+            - closed
+            - cleanup_unconfirmed
+        requestedUrl:
+          type: string
+          format: uri
+        finalUrl:
+          type: string
+          format: uri
+        title:
+          type: string
+        mimeType:
+          type: string
+        markdown:
+          type: string
+        html:
+          type: string
+        warnings:
+          type: array
+          description: Recoverable nested-content traversal skips.
+          items:
+            $ref: "#/components/schemas/TraversalWarning"
+        stats:
+          $ref: "#/components/schemas/ExtractionStats"
+        error:
+          $ref: "#/components/schemas/Error"
+    TraversalWarning:
+      type: object
+      required: [kind, message, depth]
+      properties:
+        kind:
+          enum: [iframe, shadow_root]
+        message:
+          type: string
+        url:
+          type: string
+        depth:
+          type: integer
+          minimum: 1
+    ExtractionStats:
+      type: object
+      required: [elapsedMs, scrollRounds, matchedItems, htmlBytes]
+      properties:
+        elapsedMs:
+          type: integer
+          minimum: 0
+        scrollRounds:
+          type: integer
+          minimum: 0
+          description: Automatic passes in which at least one container moved.
+        matchedItems:
+          type: integer
+          minimum: 0
+          description: Deduplicated content blocks captured in feed mode.
+        htmlBytes:
+          type: integer
+          minimum: 0
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/Error"
+    Error:
+      type: object
+      required: [code, message, retryable]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        retryable:
+          type: boolean

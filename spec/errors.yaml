@@ -1,0 +1,27 @@
+version: 1
+errors:
+  invalid_url: { retryable: false, httpStatus: 400 }
+  unsupported_scheme: { retryable: false, httpStatus: 400 }
+  unauthorized: { retryable: false, httpStatus: 401 }
+  browser_unavailable: { retryable: true, httpStatus: 503 }
+  instance_conflict: { retryable: true, httpStatus: 409 }
+  queue_full: { retryable: true, httpStatus: 429 }
+  protocol_error: { retryable: false, httpStatus: 400 }
+  debugger_attach_failed: { retryable: true, httpStatus: 422 }
+  tab_create_failed: { retryable: true, httpStatus: 422 }
+  tab_closed: { retryable: true, httpStatus: 422 }
+  navigation_failed: { retryable: true, httpStatus: 422 }
+  load_timeout: { retryable: true, httpStatus: 422 }
+  job_timeout: { retryable: true, httpStatus: 422 }
+  selector_invalid: { retryable: false, httpStatus: 400 }
+  selector_not_found: { retryable: false, httpStatus: 422 }
+  unsupported_content_type: { retryable: false, httpStatus: 422 }
+  extraction_failed: { retryable: false, httpStatus: 422 }
+  capture_backpressure: { retryable: true, httpStatus: 422 }
+  result_too_large: { retryable: false, httpStatus: 422 }
+  conversion_failed: { retryable: false, httpStatus: 422 }
+  cancelled: { retryable: false, httpStatus: 422 }
+  cleanup_unconfirmed: { retryable: true, httpStatus: 422 }
+  internal_error: { retryable: true, httpStatus: 500 }
+  result_expired: { retryable: false, httpStatus: 404 }
+  not_found: { retryable: false, httpStatus: 404 }

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <title>虚拟列表信息流</title>
+    <link rel="stylesheet" href="assets/site.css">
+  </head>
+  <body>
+    <main>
+      <h1>虚拟列表</h1>
+      <div id="virtual-viewport"></div>
+    </main>
+    <script>
+      const viewport = document.querySelector("#virtual-viewport");
+      let nextId = 1;
+      function appendBatch() {
+        for (let count = 0; count < 4 && nextId <= 36; count += 1) {
+          const item = document.createElement("article");
+          item.dataset.id = String(nextId);
+          item.innerHTML = "<h2>虚拟项目 " + nextId + "</h2><p>早期节点会从 DOM 中删除。</p>";
+          viewport.append(item);
+          nextId += 1;
+        }
+        while (viewport.querySelectorAll("article").length > 8) {
+          viewport.querySelector("article").remove();
+        }
+      }
+      appendBatch();
+      appendBatch();
+      viewport.addEventListener("scroll", () => {
+        if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 60) {
+          const previousHeight = viewport.scrollHeight;
+          setTimeout(() => {
+            appendBatch();
+            viewport.scrollTop = Math.max(0, viewport.scrollHeight - previousHeight);
+          }, 120);
+        }
+      });
+    </script>
+  </body>
+</html>

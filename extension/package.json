@@ -1,0 +1,19 @@
+{
+  "name": "browser-extractor-extension",
+  "version": "0.1.0",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "generate": "node ../scripts/generate-protocol-types.mjs",
+    "test": "node tests/run-algorithms.mjs",
+    "typecheck": "tsc --noEmit",
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@types/chrome": "0.2.2",
+    "esbuild": "0.28.1",
+    "json-schema-to-typescript": "15.0.4",
+    "typescript": "7.0.2"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "version": 4,
+  "type": "capture_chunk",
+  "requestId": "55373e17-99fa-472c-8406-35b08a82a919",
+  "payload": {
+    "sequence": 0,
+    "kind": "item",
+    "key": "post-123",
+    "html": "<article><h2>Example</h2></article>"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 4,
+  "type": "capture_begin",
+  "requestId": "55373e17-99fa-472c-8406-35b08a82a919",
+  "payload": {
+    "captureType": "feed",
+    "selectionApplied": true,
+    "finalUrl": "https://example.com/feed",
+    "title": "Example feed",
+    "mimeType": "text/html",
+    "mimeTypeUnknown": false
+  }
+}

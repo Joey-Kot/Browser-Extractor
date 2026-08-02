@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <title>无限滚动信息流</title>
+    <link rel="stylesheet" href="assets/site.css">
+  </head>
+  <body>
+    <main id="feed">
+      <h1>无限滚动信息流</h1>
+    </main>
+    <script>
+      const feed = document.querySelector("#feed");
+      let nextId = 1;
+      function appendBatch() {
+        for (let offset = 0; offset < 5 && nextId <= 40; offset += 1) {
+          const item = document.createElement("article");
+          item.dataset.postId = String(nextId);
+          item.innerHTML =
+            "<h2>信息流项目 " + nextId + "</h2>" +
+            "<p>这是滚动过程中追加的第 " + nextId + " 项。</p>" +
+            "<a href='/posts/" + nextId + "'>详情</a>";
+          feed.append(item);
+          nextId += 1;
+        }
+      }
+      appendBatch();
+      window.addEventListener("scroll", () => {
+        if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 300) {
+          setTimeout(appendBatch, 180);
+        }
+      });
+    </script>
+  </body>
+</html>
+

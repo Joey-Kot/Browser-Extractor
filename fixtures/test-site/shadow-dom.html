@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Shadow DOM fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>Shadow DOM fixture</h1>
+      <open-card></open-card>
+      <closed-card></closed-card>
+    </main>
+    <script>
+      customElements.define(
+        "open-card",
+        class extends HTMLElement {
+          connectedCallback() {
+            const root = this.attachShadow({ mode: "open" });
+            root.innerHTML = `
+              <article data-shadow-kind="open">
+                <h2>Open shadow article</h2>
+                <a href="./article.html">Open shadow link</a>
+                <nested-card></nested-card>
+              </article>
+            `;
+          }
+        }
+      );
+      customElements.define(
+        "nested-card",
+        class extends HTMLElement {
+          connectedCallback() {
+            this.attachShadow({ mode: "open" }).innerHTML =
+              '<p data-shadow-kind="nested">Nested shadow content</p>';
+          }
+        }
+      );
+      customElements.define(
+        "closed-card",
+        class extends HTMLElement {
+          connectedCallback() {
+            this.attachShadow({ mode: "closed" }).innerHTML =
+              '<p data-shadow-kind="closed">Closed shadow content</p>';
+          }
+        }
+      );
+    </script>
+  </body>
+</html>

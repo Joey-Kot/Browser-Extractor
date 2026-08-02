@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <title>内部滚动容器</title>
+    <link rel="stylesheet" href="assets/site.css">
+  </head>
+  <body>
+    <main>
+      <h1>内部滚动容器</h1>
+      <section id="scroll-container"></section>
+    </main>
+    <script>
+      const container = document.querySelector("#scroll-container");
+      let nextId = 1;
+      function appendBatch() {
+        for (let count = 0; count < 5 && nextId <= 30; count += 1) {
+          const item = document.createElement("article");
+          item.dataset.id = String(nextId);
+          item.innerHTML = "<h2>容器项目 " + nextId + "</h2><p>只滚动内部元素。</p>";
+          container.append(item);
+          nextId += 1;
+        }
+      }
+      appendBatch();
+      container.addEventListener("scroll", () => {
+        if (container.scrollTop + container.clientHeight >= container.scrollHeight - 60) {
+          setTimeout(appendBatch, 120);
+        }
+      });
+    </script>
+  </body>
+</html>
+

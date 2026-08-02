@@ -1,0 +1,404 @@
+name: Build Latest Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: latest-release
+  cancel-in-progress: false
+
+jobs:
+  extension:
+    name: Chrome extension
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: "24.18.1"
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install extension dependencies
+        run: npm --prefix extension ci --no-audit --no-fund
+
+      - name: Generate and verify bridge protocol types
+        run: |
+          npm --prefix extension run generate
+          git diff --exit-code -- extension/src/generated/protocol.ts
+
+      - name: Type-check extension
+        run: npm --prefix extension run typecheck
+
+      - name: Test extension
+        run: npm --prefix extension test
+
+      - name: Build extension
+        run: npm --prefix extension run build
+
+      - name: Package extension and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset="browser-extractor-extension.zip"
+          stage="${RUNNER_TEMP}/browser-extractor-extension"
+
+          mkdir -p "${stage}" release-output
+          cp -R extension/dist/. "${stage}/"
+          cp LICENSE NOTICE "${stage}/"
+
+          (
+            cd "${stage}"
+            zip -qry "${GITHUB_WORKSPACE}/release-output/${asset}" .
+          )
+          (
+            cd release-output
+            sha256sum "${asset}" > "${asset}.sha256"
+          )
+
+      - name: Upload extension artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-extension
+          path: release-output/*
+          if-no-files-found: error
+          retention-days: 1
+
+  server:
+    name: Server (${{ matrix.platform }}-${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            arch: x86_64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            executable: extractor-server
+          - platform: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            executable: extractor-server
+          - platform: windows
+            arch: x86_64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            executable: extractor-server.exe
+          - platform: windows
+            arch: arm64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            executable: extractor-server.exe
+          - platform: macos
+            arch: x86_64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            executable: extractor-server
+          - platform: macos
+            arch: arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+            executable: extractor-server
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2.9.1
+        with:
+          key: server-${{ matrix.target }}
+
+      - name: Test Rust workspace
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: cargo test --workspace --locked
+
+      - name: Build server
+        run: cargo build --release --locked --target ${{ matrix.target }} --bin extractor-server
+
+      - name: Package Linux server and checksum
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="browser-extractor-server-${{ matrix.platform }}-${{ matrix.arch }}"
+          package_root="${RUNNER_TEMP}/browser-extractor-server-package"
+          stage="${package_root}/${base}"
+
+          mkdir -p "${stage}" release-output
+          install -m 0755 "target/${{ matrix.target }}/release/${{ matrix.executable }}" "${stage}/extractor-server"
+          cp config.example.toml README.md README_ZH.md LICENSE NOTICE THIRD_PARTY_LICENSES.md "${stage}/"
+          cp -R THIRD_PARTY_LICENSES "${stage}/THIRD_PARTY_LICENSES"
+
+          (
+            cd "${package_root}"
+            tar -czf "${GITHUB_WORKSPACE}/release-output/${base}.tar.gz" "${base}"
+          )
+          (
+            cd release-output
+            sha256sum "${base}.tar.gz" > "${base}.tar.gz.sha256"
+          )
+
+      - name: Package macOS server and checksum
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="browser-extractor-server-${{ matrix.platform }}-${{ matrix.arch }}"
+          package_root="${RUNNER_TEMP}/browser-extractor-server-package"
+          stage="${package_root}/${base}"
+
+          mkdir -p "${stage}" release-output
+          install -m 0755 "target/${{ matrix.target }}/release/${{ matrix.executable }}" "${stage}/extractor-server"
+          cp config.example.toml README.md README_ZH.md LICENSE NOTICE THIRD_PARTY_LICENSES.md "${stage}/"
+          cp -R THIRD_PARTY_LICENSES "${stage}/THIRD_PARTY_LICENSES"
+
+          (
+            cd "${package_root}"
+            zip -qry "${GITHUB_WORKSPACE}/release-output/${base}.zip" "${base}"
+          )
+          (
+            cd release-output
+            shasum -a 256 "${base}.zip" > "${base}.zip.sha256"
+          )
+
+      - name: Package Windows server and checksum
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $base = "browser-extractor-server-${{ matrix.platform }}-${{ matrix.arch }}"
+          $packageRoot = Join-Path $env:RUNNER_TEMP "browser-extractor-server-package"
+          $stage = Join-Path $packageRoot $base
+          $output = Join-Path $env:GITHUB_WORKSPACE "release-output"
+          $archive = Join-Path $output "${base}.zip"
+
+          New-Item -ItemType Directory -Force -Path $stage, $output | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.executable }}" (Join-Path $stage "extractor-server.exe")
+          Copy-Item config.example.toml, README.md, README_ZH.md, LICENSE, NOTICE, THIRD_PARTY_LICENSES.md $stage
+          Copy-Item THIRD_PARTY_LICENSES (Join-Path $stage "THIRD_PARTY_LICENSES") -Recurse
+
+          Compress-Archive -Path $stage -DestinationPath $archive -CompressionLevel Optimal
+          $hash = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksum = "${hash}  ${base}.zip`n"
+          [System.IO.File]::WriteAllText(
+            "${archive}.sha256",
+            $checksum,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+      - name: Upload server artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-server-${{ matrix.platform }}-${{ matrix.arch }}
+          path: release-output/*
+          if-no-files-found: error
+          retention-days: 1
+
+  cli:
+    name: CLI (${{ matrix.platform }}-${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            arch: x86_64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            executable: scrape
+          - platform: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            executable: scrape
+          - platform: windows
+            arch: x86_64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            executable: scrape.exe
+          - platform: windows
+            arch: arm64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            executable: scrape.exe
+          - platform: macos
+            arch: x86_64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            executable: scrape
+          - platform: macos
+            arch: arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+            executable: scrape
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2.9.1
+        with:
+          key: cli-${{ matrix.target }}
+
+      - name: Build CLI
+        run: cargo build --release --locked --target ${{ matrix.target }} --bin scrape
+
+      - name: Package Linux CLI and checksum
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="browser-extractor-cli-${{ matrix.platform }}-${{ matrix.arch }}"
+          package_root="${RUNNER_TEMP}/browser-extractor-cli-package"
+          stage="${package_root}/${base}"
+
+          mkdir -p "${stage}" release-output
+          install -m 0755 "target/${{ matrix.target }}/release/${{ matrix.executable }}" "${stage}/scrape"
+          cp README.md README_ZH.md LICENSE NOTICE THIRD_PARTY_LICENSES.md "${stage}/"
+          cp -R THIRD_PARTY_LICENSES "${stage}/THIRD_PARTY_LICENSES"
+
+          (
+            cd "${package_root}"
+            tar -czf "${GITHUB_WORKSPACE}/release-output/${base}.tar.gz" "${base}"
+          )
+          (
+            cd release-output
+            sha256sum "${base}.tar.gz" > "${base}.tar.gz.sha256"
+          )
+
+      - name: Package macOS CLI and checksum
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="browser-extractor-cli-${{ matrix.platform }}-${{ matrix.arch }}"
+          package_root="${RUNNER_TEMP}/browser-extractor-cli-package"
+          stage="${package_root}/${base}"
+
+          mkdir -p "${stage}" release-output
+          install -m 0755 "target/${{ matrix.target }}/release/${{ matrix.executable }}" "${stage}/scrape"
+          cp README.md README_ZH.md LICENSE NOTICE THIRD_PARTY_LICENSES.md "${stage}/"
+          cp -R THIRD_PARTY_LICENSES "${stage}/THIRD_PARTY_LICENSES"
+
+          (
+            cd "${package_root}"
+            zip -qry "${GITHUB_WORKSPACE}/release-output/${base}.zip" "${base}"
+          )
+          (
+            cd release-output
+            shasum -a 256 "${base}.zip" > "${base}.zip.sha256"
+          )
+
+      - name: Package Windows CLI and checksum
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $base = "browser-extractor-cli-${{ matrix.platform }}-${{ matrix.arch }}"
+          $packageRoot = Join-Path $env:RUNNER_TEMP "browser-extractor-cli-package"
+          $stage = Join-Path $packageRoot $base
+          $output = Join-Path $env:GITHUB_WORKSPACE "release-output"
+          $archive = Join-Path $output "${base}.zip"
+
+          New-Item -ItemType Directory -Force -Path $stage, $output | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.executable }}" (Join-Path $stage "scrape.exe")
+          Copy-Item README.md, README_ZH.md, LICENSE, NOTICE, THIRD_PARTY_LICENSES.md $stage
+          Copy-Item THIRD_PARTY_LICENSES (Join-Path $stage "THIRD_PARTY_LICENSES") -Recurse
+
+          Compress-Archive -Path $stage -DestinationPath $archive -CompressionLevel Optimal
+          $hash = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksum = "${hash}  ${base}.zip`n"
+          [System.IO.File]::WriteAllText(
+            "${archive}.sha256",
+            $checksum,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+      - name: Upload CLI artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-cli-${{ matrix.platform }}-${{ matrix.arch }}
+          path: release-output/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Replace Latest release
+    needs:
+      - extension
+      - server
+      - cli
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository and tags
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Verify checksums and create aggregate checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          sha256sum --check ./*.sha256
+          sha256sum ./*.zip ./*.tar.gz | sed 's#  \./#  #' > SHA256SUMS
+
+      - name: Replace Latest tag and release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if gh release view Latest; then
+            gh release delete Latest --cleanup-tag --yes
+          fi
+
+          git tag --force Latest "${GITHUB_SHA}"
+          git push origin refs/tags/Latest --force
+
+          gh release create Latest release-assets/* \
+            --verify-tag \
+            --title "Latest" \
+            --notes "Automated rolling build from commit ${GITHUB_SHA}. Includes the Browser Extractor extension, server, and CLI. Every archive has a matching SHA-256 sidecar; SHA256SUMS contains the aggregate checksums." \
+            --latest

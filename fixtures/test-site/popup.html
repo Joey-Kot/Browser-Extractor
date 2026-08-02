@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <title>子标签页清理测试</title>
+    <link rel="stylesheet" href="assets/site.css">
+  </head>
+  <body>
+    <main>
+      <h1>子标签页清理测试</h1>
+      <p>人工验收时点击下面的链接，扩展应把新页面计入任务资源并关闭。</p>
+      <a href="article.html" target="_blank">打开子标签页</a>
+      <button id="open-popup">使用 window.open</button>
+    </main>
+    <script>
+      document.querySelector("#open-popup").addEventListener("click", () => {
+        window.open("article.html", "_blank");
+      });
+    </script>
+  </body>
+</html>
+

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>iframe traversal fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>iframe traversal fixture</h1>
+      <iframe title="same-origin frame" src="./iframe-content.html"></iframe>
+      <iframe id="cross-origin-frame" title="cross-origin frame"></iframe>
+    </main>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const frameOrigin = params.get("frameOrigin") ?? "http://127.0.0.1:18081";
+      document.querySelector("#cross-origin-frame").src =
+        new URL("/iframe-content.html", frameOrigin).href;
+    </script>
+  </body>
+</html>

@@ -1,0 +1,10 @@
+/target/
+/extension/node_modules/
+/extension/dist/
+/release/
+/extension-build-tmp/
+/.idea/
+/.vscode/
+*.log
+*.tmp
+.DS_Store

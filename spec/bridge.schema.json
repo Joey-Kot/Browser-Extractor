@@ -1,0 +1,542 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://browser-extractor.local/spec/bridge.schema.json",
+  "title": "Browser Extractor Bridge Protocol",
+  "description": "Authoritative protocol shared by the Rust daemon and Chrome extension.",
+  "$ref": "#/$defs/BridgeMessage",
+  "$defs": {
+    "BridgeMessage": {
+      "oneOf": [
+        { "$ref": "#/$defs/HelloMessage" },
+        { "$ref": "#/$defs/WelcomeMessage" },
+        { "$ref": "#/$defs/ExtractMessage" },
+        { "$ref": "#/$defs/AcceptedMessage" },
+        { "$ref": "#/$defs/ProgressMessage" },
+        { "$ref": "#/$defs/CaptureBeginMessage" },
+        { "$ref": "#/$defs/CaptureChunkMessage" },
+        { "$ref": "#/$defs/CaptureEndMessage" },
+        { "$ref": "#/$defs/ChunkAckMessage" },
+        { "$ref": "#/$defs/CaptureAckMessage" },
+        { "$ref": "#/$defs/ErrorMessage" },
+        { "$ref": "#/$defs/ErrorAckMessage" },
+        { "$ref": "#/$defs/CancelMessage" },
+        { "$ref": "#/$defs/ClosedMessage" },
+        { "$ref": "#/$defs/SyncStateMessage" },
+        { "$ref": "#/$defs/PingMessage" },
+        { "$ref": "#/$defs/PongMessage" }
+      ]
+    },
+    "ProtocolVersion": {
+      "type": "integer",
+      "const": 4
+    },
+    "RequestId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "ExtractionMode": {
+      "enum": ["document", "feed"]
+    },
+    "VisibilityMode": {
+      "enum": ["background", "foreground", "auto"]
+    },
+    "CaptureType": {
+      "enum": ["document", "feed"]
+    },
+    "ChunkKind": {
+      "enum": ["document", "item"]
+    },
+    "ProgressStage": {
+      "enum": [
+        "creating_tab",
+        "navigating",
+        "waiting",
+        "collecting",
+        "receiving",
+        "closing"
+      ]
+    },
+    "HelloMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "payload"],
+      "properties": {
+        "version": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "hello" },
+        "payload": { "$ref": "#/$defs/HelloPayload" }
+      }
+    },
+    "WelcomeMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "payload"],
+      "properties": {
+        "version": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "welcome" },
+        "payload": { "$ref": "#/$defs/WelcomePayload" }
+      }
+    },
+    "ExtractMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "requestId", "payload"],
+      "properties": {
+        "version": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "extract" },
+        "requestId": { "$ref": "#/$defs/RequestId" },
+        "payload": { "$ref": "#/$defs/ExtractionRequest" }
+      }
+    },
+    "AcceptedMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "requestId", "payload"],
+      "properties": {
+        "version": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "accepted" },
+        "requestId": { "$ref": "#/$defs/RequestId" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        }
+      }
+    },
+    "ProgressMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "requestId", "payload"],
+      "properties": {
+        "version": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "progress" },
+        "requestId": { "$ref": "#/$defs/RequestId" },
+        "payload": { "$ref": "#/$defs/ProgressPayload" }
+      }
+    },
+    "CaptureBeginMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "requestId", "payload"],
+      "properties": {
+        "version": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "capture_begin" },
+        "requestId": { "$ref": "#/$defs/RequestId" },
+        "payload": { "$ref": "#/$defs/CaptureBeginPayload" }
+      }
+    },
+    "CaptureChunkMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "requestId", "payload"],
+      "properties": {
+        "version": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "capture_chunk" },
+        "requestId": { "$ref": "#/$defs/RequestId" },
+        "payload": { "$ref": "#/$defs/CaptureChunkPayload" }
+      }
+    },
+    "CaptureEndMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "requestId", "payload"],
+      "properties": {
+        "version": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "capture_end" },
+        "requestId": { "$ref": "#/$defs/RequestId" },
+        "payload": { "$ref": "#/$defs/CaptureEndPayload" }
+      }
+    },
+    "ChunkAckMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "requestId", "payload"],
+      "properties": {
+        "version": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "chunk_ack" },
+        "requestId": { "$ref": "#/$defs/RequestId" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["upToSequence"],
+          "properties": {
+            "upToSequence": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "CaptureAckMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "requestId", "payload"],
+      "properties": {
+        "version": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "capture_ack" },
+        "requestId": { "$ref": "#/$defs/RequestId" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        }
+      }
+    },
+    "ErrorMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "payload"],
+      "properties": {
+        "version": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "error" },
+        "requestId": {
+          "oneOf": [
+            { "$ref": "#/$defs/RequestId" },
+            { "type": "null" }
+          ]
+        },
+        "payload": { "$ref": "#/$defs/ErrorPayload" }
+      }
+    },
+    "ErrorAckMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "requestId", "payload"],
+      "properties": {
+        "version": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "error_ack" },
+        "requestId": { "$ref": "#/$defs/RequestId" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        }
+      }
+    },
+    "CancelMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "requestId", "payload"],
+      "properties": {
+        "version": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "cancel" },
+        "requestId": { "$ref": "#/$defs/RequestId" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reason"],
+          "properties": {
+            "reason": { "type": "string" }
+          }
+        }
+      }
+    },
+    "ClosedMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "requestId", "payload"],
+      "properties": {
+        "version": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "closed" },
+        "requestId": { "$ref": "#/$defs/RequestId" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        }
+      }
+    },
+    "SyncStateMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "payload"],
+      "properties": {
+        "version": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "sync_state" },
+        "payload": { "$ref": "#/$defs/SyncStatePayload" }
+      }
+    },
+    "PingMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "payload"],
+      "properties": {
+        "version": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "ping" },
+        "payload": { "$ref": "#/$defs/PingPayload" }
+      }
+    },
+    "PongMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "type", "payload"],
+      "properties": {
+        "version": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "pong" },
+        "payload": { "$ref": "#/$defs/PingPayload" }
+      }
+    },
+    "HelloPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "extensionToken",
+        "browserInstanceId",
+        "browserName",
+        "extensionVersion",
+        "protocolVersion"
+      ],
+      "properties": {
+        "extensionToken": { "type": "string", "minLength": 1 },
+        "browserInstanceId": { "type": "string", "minLength": 1 },
+        "browserName": { "type": "string", "minLength": 1 },
+        "extensionVersion": { "type": "string", "minLength": 1 },
+        "protocolVersion": { "$ref": "#/$defs/ProtocolVersion" }
+      }
+    },
+    "WelcomePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "sessionId",
+        "maxUnackedChunks",
+        "chunkBytes",
+        "pingIntervalSeconds"
+      ],
+      "properties": {
+        "protocolVersion": { "$ref": "#/$defs/ProtocolVersion" },
+        "sessionId": { "$ref": "#/$defs/RequestId" },
+        "maxUnackedChunks": { "type": "integer", "minimum": 1 },
+        "chunkBytes": { "type": "integer", "minimum": 1024 },
+        "pingIntervalSeconds": { "type": "integer", "minimum": 5 }
+      }
+    },
+    "ProgressPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage"],
+      "properties": {
+        "stage": { "$ref": "#/$defs/ProgressStage" },
+        "detail": { "type": "string" }
+      }
+    },
+    "CaptureBeginPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "captureType",
+        "selectionApplied",
+        "finalUrl",
+        "title",
+        "mimeType"
+      ],
+      "properties": {
+        "captureType": { "$ref": "#/$defs/CaptureType" },
+        "selectionApplied": { "type": "boolean" },
+        "finalUrl": { "type": "string", "format": "uri" },
+        "title": { "type": "string" },
+        "mimeType": { "type": "string" },
+        "mimeTypeUnknown": { "type": "boolean", "default": false }
+      }
+    },
+    "CaptureChunkPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sequence", "kind", "html"],
+      "properties": {
+        "sequence": { "type": "integer", "minimum": 0 },
+        "kind": { "$ref": "#/$defs/ChunkKind" },
+        "key": { "type": ["string", "null"] },
+        "html": { "type": "string" }
+      }
+    },
+    "CaptureEndPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chunks", "totalBytes", "checksum"],
+      "properties": {
+        "chunks": { "type": "integer", "minimum": 0 },
+        "totalBytes": { "type": "integer", "minimum": 0 },
+        "checksum": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+        "scrollRounds": { "type": "integer", "minimum": 0, "default": 0 },
+        "matchedItems": { "type": "integer", "minimum": 0, "default": 0 },
+        "warnings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/TraversalWarning" },
+          "default": []
+        }
+      }
+    },
+    "TraversalWarning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "message", "depth"],
+      "properties": {
+        "kind": { "enum": ["iframe", "shadow_root"] },
+        "message": { "type": "string" },
+        "url": { "type": "string" },
+        "depth": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "SyncStatePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["activeJobs"],
+      "properties": {
+        "activeJobs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["requestId", "tabIds", "status"],
+            "properties": {
+              "requestId": { "$ref": "#/$defs/RequestId" },
+              "tabIds": {
+                "type": "array",
+                "items": { "type": "integer" },
+                "uniqueItems": true
+              },
+              "status": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "PingPayload": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "nonce": { "type": ["string", "null"] }
+      }
+    },
+    "ExtractionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "mode",
+        "waitMs",
+        "jobTimeoutMs",
+        "loadTimeoutMs",
+        "settleMs",
+        "visibilityMode",
+        "includeSelectors",
+        "excludeSelectors",
+        "scroll",
+        "output"
+      ],
+      "properties": {
+        "url": { "type": "string", "format": "uri" },
+        "mode": { "$ref": "#/$defs/ExtractionMode" },
+        "waitMs": { "type": "integer", "minimum": 0 },
+        "jobTimeoutMs": { "type": "integer", "minimum": 1 },
+        "loadTimeoutMs": { "type": "integer", "minimum": 1 },
+        "settleMs": { "type": "integer", "minimum": 0 },
+        "visibilityMode": { "$ref": "#/$defs/VisibilityMode" },
+        "waitForSelector": { "type": ["string", "null"] },
+        "includeSelectors": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "excludeSelectors": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "traversal": { "$ref": "#/$defs/TraversalOptions" },
+        "scroll": { "$ref": "#/$defs/ScrollOptions" },
+        "output": { "$ref": "#/$defs/OutputOptions" }
+      }
+    },
+    "TraversalOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Recursive serialization options applied after selectors run in the top-level document.",
+      "required": ["shadowDom", "iframes"],
+      "properties": {
+        "shadowDom": { "$ref": "#/$defs/TraversalTargetOptions" },
+        "iframes": { "$ref": "#/$defs/TraversalTargetOptions" }
+      }
+    },
+    "TraversalTargetOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "maxDepth"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "maxDepth": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "ScrollOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Automatic vertical scrolling. Container discovery, step sizing, and stopping passes are extension-managed.",
+      "required": ["enabled", "maxDistancePx", "settleMs", "dedupe"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "maxDistancePx": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum cumulative distance traveled by each detected container."
+        },
+        "settleMs": { "type": "integer", "minimum": 0 },
+        "dedupe": { "$ref": "#/$defs/DedupeOptions" }
+      }
+    },
+    "DedupeOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy"],
+      "properties": {
+        "strategy": { "enum": ["auto", "attribute", "link", "html_hash"] },
+        "attribute": { "type": ["string", "null"] },
+        "selector": { "type": ["string", "null"] }
+      }
+    },
+    "OutputOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["includeHtml"],
+      "properties": {
+        "includeHtml": { "type": "boolean" }
+      }
+    },
+    "ErrorPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": { "$ref": "#/$defs/ErrorCode" },
+        "message": { "type": "string" },
+        "retryable": { "type": "boolean" }
+      }
+    },
+    "ErrorCode": {
+      "enum": [
+        "invalid_url",
+        "unsupported_scheme",
+        "unauthorized",
+        "browser_unavailable",
+        "instance_conflict",
+        "queue_full",
+        "protocol_error",
+        "debugger_attach_failed",
+        "tab_create_failed",
+        "tab_closed",
+        "navigation_failed",
+        "load_timeout",
+        "job_timeout",
+        "selector_invalid",
+        "selector_not_found",
+        "unsupported_content_type",
+        "extraction_failed",
+        "capture_backpressure",
+        "result_too_large",
+        "conversion_failed",
+        "cancelled",
+        "cleanup_unconfirmed",
+        "internal_error",
+        "result_expired",
+        "not_found"
+      ]
+    }
+  }
+}

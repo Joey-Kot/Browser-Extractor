@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <title>延迟渲染页面</title>
+    <link rel="stylesheet" href="assets/site.css">
+  </head>
+  <body>
+    <main id="app">
+      <p id="loading">应用正在加载…</p>
+    </main>
+    <script>
+      setTimeout(() => {
+        document.querySelector("#app").innerHTML = [
+          "<article data-ready='true'>",
+          "<h1>延迟出现的正文</h1>",
+          "<p>该内容在初始 load 事件之后由脚本插入。</p>",
+          "</article>"
+        ].join("");
+      }, 1200);
+    </script>
+  </body>
+</html>
+

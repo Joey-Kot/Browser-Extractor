@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Browser Extractor</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="icons/icon-48.png" width="32" height="32" alt="">
+        <div>
+          <h1>Browser Extractor</h1>
+          <p id="connection-state">正在读取状态…</p>
+        </div>
+      </header>
+
+      <form id="settings-form">
+        <label>
+          Bridge 地址
+          <input id="bridge-url" name="bridgeUrl" type="url" required>
+        </label>
+        <label>
+          扩展 Token
+          <input id="extension-token" name="extensionToken" type="password" autocomplete="off">
+        </label>
+        <button type="submit">保存并重连</button>
+      </form>
+
+      <dl>
+        <div>
+          <dt>浏览器实例</dt>
+          <dd id="instance-id">—</dd>
+        </div>
+        <div>
+          <dt>扩展版本</dt>
+          <dd id="extension-version">—</dd>
+        </div>
+      </dl>
+      <p id="message" role="status"></p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
+

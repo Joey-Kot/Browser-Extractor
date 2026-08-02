@@ -1,0 +1,28 @@
+{
+  "url": "https://example.com/feed",
+  "mode": "feed",
+  "waitMs": 30000,
+  "jobTimeoutMs": 120000,
+  "loadTimeoutMs": 30000,
+  "settleMs": 1000,
+  "visibilityMode": "background",
+  "waitForSelector": "body",
+  "includeSelectors": ["body"],
+  "excludeSelectors": ["nav", "aside", ".sponsored"],
+  "traversal": {
+    "shadowDom": {
+      "enabled": false,
+      "maxDepth": 3
+    },
+    "iframes": {
+      "enabled": false,
+      "maxDepth": 3
+    }
+  },
+  "scroll": {
+    "enabled": true
+  },
+  "output": {
+    "includeHtml": false
+  }
+}
