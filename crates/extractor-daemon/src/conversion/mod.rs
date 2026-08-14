@@ -1,4 +1,5 @@
 pub mod htmd_renderer;
+mod markdown_postprocessor;
 pub mod normalizer;
 
 use std::sync::Arc;
@@ -15,6 +16,7 @@ use crate::{
 
 use self::{
     htmd_renderer::{HtmdRenderer, MarkdownRenderer},
+    markdown_postprocessor::postprocess_markdown,
     normalizer::HtmlNormalizer,
 };
 
@@ -66,10 +68,7 @@ fn convert_sync(capture: CaptureOutput) -> Result<ConversionResult, ErrorDetail>
 
     if mime == "text/plain" {
         let text = plain_text(&capture.html);
-        return Ok(ConversionResult {
-            markdown: text.trim().to_owned(),
-            normalized_html: capture.html,
-        });
+        return Ok(conversion_result(text.trim().to_owned(), capture.html));
     }
 
     if mime == "application/json" || mime.ends_with("+json") {
@@ -82,10 +81,7 @@ fn convert_sync(capture: CaptureOutput) -> Result<ConversionResult, ErrorDetail>
             .map(|line| format!("    {line}"))
             .collect::<Vec<_>>()
             .join("\n");
-        return Ok(ConversionResult {
-            markdown,
-            normalized_html: capture.html,
-        });
+        return Ok(conversion_result(markdown, capture.html));
     }
 
     if !matches!(mime.as_str(), "text/html" | "application/xhtml+xml" | "")
@@ -108,10 +104,14 @@ fn convert_sync(capture: CaptureOutput) -> Result<ConversionResult, ErrorDetail>
     let normalizer = HtmlNormalizer::new();
     let normalized = normalizer.normalize(&capture.html, &base_url)?;
     let markdown = HtmdRenderer.render(&normalized)?;
-    Ok(ConversionResult {
-        markdown,
-        normalized_html: normalized,
-    })
+    Ok(conversion_result(markdown, normalized))
+}
+
+fn conversion_result(markdown: String, normalized_html: String) -> ConversionResult {
+    ConversionResult {
+        markdown: postprocess_markdown(&markdown),
+        normalized_html,
+    }
 }
 
 fn plain_text(html: &str) -> String {
