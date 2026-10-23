@@ -283,8 +283,8 @@ Runtime:
 
 Development:
 
-- Rust 1.97.1 or newer.
-- Node.js 20 or newer.
+- Rust 1.99.1 or newer.
+- Node.js 24.22.1 (matching GitHub Actions).
 
 Node.js is needed only to develop and build the extension. Neither the daemon nor the CLI requires Node.js at runtime.
 

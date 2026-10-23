@@ -111,10 +111,12 @@ fn extract_request_example_uses_scroll_defaults() {
 #[test]
 fn yaml_specifications_are_well_formed() {
     let root = repository_root();
-    let _: serde_yaml::Value =
-        serde_yaml::from_str(&fs::read_to_string(root.join("spec/openapi.yaml")).unwrap()).unwrap();
-    let _: serde_yaml::Value =
-        serde_yaml::from_str(&fs::read_to_string(root.join("spec/errors.yaml")).unwrap()).unwrap();
+    let _: Value =
+        serde_saphyr::from_str(&fs::read_to_string(root.join("spec/openapi.yaml")).unwrap())
+            .unwrap();
+    let _: Value =
+        serde_saphyr::from_str(&fs::read_to_string(root.join("spec/errors.yaml")).unwrap())
+            .unwrap();
 }
 
 fn repository_root() -> PathBuf {

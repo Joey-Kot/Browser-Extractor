@@ -41,6 +41,6 @@ uuid.workspace = true
 
 [dev-dependencies]
 http-body-util = "=0.1.4"
-serde_yaml = "=0.9.34"
+serde-saphyr = { version = "=2.0.0", default-features = false, features = ["deserialize"] }
 tokio-tungstenite = "=0.30.0"
 tower.workspace = true

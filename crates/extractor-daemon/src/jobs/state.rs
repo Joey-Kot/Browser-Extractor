@@ -123,10 +123,10 @@ impl JobRecord {
     pub async fn install_assembler(
         &self,
         assembler: CaptureAssembler,
-    ) -> Result<(), CaptureAssembler> {
+    ) -> Result<(), Box<CaptureAssembler>> {
         let mut slot = self.assembler.lock().await;
         if slot.is_some() {
-            return Err(assembler);
+            return Err(Box::new(assembler));
         }
         *slot = Some(assembler);
         Ok(())

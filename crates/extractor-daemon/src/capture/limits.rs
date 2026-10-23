@@ -27,7 +27,7 @@ pub fn reserve_inflight(counter: &AtomicU64, bytes: u64, limit: u64) -> Result<(
 }
 
 pub fn release_inflight(counter: &AtomicU64, bytes: u64) {
-    let _ = counter.fetch_update(Ordering::AcqRel, Ordering::Relaxed, |current| {
+    let _ = counter.try_update(Ordering::AcqRel, Ordering::Relaxed, |current| {
         Some(current.saturating_sub(bytes))
     });
 }

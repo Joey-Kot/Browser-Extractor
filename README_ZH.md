@@ -283,8 +283,8 @@ stateDiagram-v2
 
 开发时：
 
-- Rust 1.97.1 及以上版本。
-- Node.js 20 及以上版本。
+- Rust 1.99.1 及以上版本。
+- Node.js 24.22.1（与 GitHub Actions 一致）。
 
 Node.js 只用于开发和构建扩展，守护程序和 CLI 运行时都不需要 Node.js。
 
