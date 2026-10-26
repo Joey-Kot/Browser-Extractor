@@ -203,6 +203,8 @@ mod tests {
             "https://example.com",
             "--output",
             "page",
+            "--wait-load",
+            "5",
             "--include-tag",
             "article",
             "--include-tag",
@@ -234,6 +236,7 @@ mod tests {
         let requests = state.requests.lock().unwrap();
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0]["mode"], "feed");
+        assert_eq!(requests[0]["settleMs"], 5_000);
         assert_eq!(requests[0]["scroll"], json!({"enabled": true}));
         assert_eq!(requests[0]["includeSelectors"], json!(["article", "nav"]));
         assert!(!requests[0]["excludeSelectors"]

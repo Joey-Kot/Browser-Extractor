@@ -95,6 +95,11 @@ pub struct Cli {
     #[arg(long, value_name = "SECONDS")]
     pub scrape_timeout: Option<u64>,
 
+    /// DOM quiet period before collection, in seconds (API settleMs).
+    /// Defaults to the server setting (1 second); 0 skips this wait.
+    #[arg(long, value_name = "SECONDS")]
+    pub wait_load: Option<u64>,
+
     /// Enable Shadow DOM traversal with the given maximum depth.
     #[arg(long, value_name = "DEPTH")]
     pub shadow_dom: Option<u32>,
@@ -157,6 +162,14 @@ impl Cli {
                 })
             })
             .transpose()?;
+        let settle_ms = self
+            .wait_load
+            .map(|seconds| {
+                seconds.checked_mul(1_000).ok_or_else(|| {
+                    CliError::usage("--wait-load is too large to convert to milliseconds")
+                })
+            })
+            .transpose()?;
 
         Ok(ResolvedCli {
             request: ExtractionRequest {
@@ -164,6 +177,7 @@ impl Cli {
                 mode: self.mode,
                 wait_ms: 0,
                 job_timeout_ms,
+                settle_ms,
                 include_selectors: (!selectors.include.is_empty()).then_some(selectors.include),
                 exclude_selectors: selectors.exclude,
                 traversal,
@@ -231,6 +245,8 @@ mod tests {
             "Browser Extractor server API base URL.",
             "Browser Extractor server API key.",
             "Maximum scroll distance per automatically detected container",
+            "--wait-load <SECONDS>",
+            "DOM quiet period before collection, in seconds (API settleMs)",
             "scrape --url https://example.com --output example",
         ] {
             assert!(help.contains(expected), "missing help text: {expected}");
@@ -245,6 +261,7 @@ mod tests {
         assert_eq!(request["mode"], "feed");
         assert_eq!(request["waitMs"], 0);
         assert_eq!(request["scroll"], json!({ "enabled": true }));
+        assert!(request.get("settleMs").is_none());
         assert!(request.get("includeSelectors").is_none());
     }
 
@@ -285,19 +302,42 @@ mod tests {
 
     #[test]
     fn generated_requests_match_the_daemon_contract() {
-        for arguments in [
-            Vec::<&str>::new(),
-            vec!["--mode", "document"],
-            vec!["--mode", "document", "--scroll-px", "900"],
-            vec!["--shadow-dom", "4", "--iframes", "2"],
-            vec!["--include-tag", "article", "--empty-tags"],
+        for (arguments, expected_settle_ms) in [
+            (Vec::<&str>::new(), 1_000),
+            (vec!["--mode", "document"], 1_000),
+            (vec!["--mode", "document", "--scroll-px", "900"], 1_000),
+            (vec!["--shadow-dom", "4", "--iframes", "2"], 1_000),
+            (vec!["--include-tag", "article", "--empty-tags"], 1_000),
+            (vec!["--wait-load", "5"], 5_000),
+            (vec!["--wait-load", "0"], 0),
+            (vec!["--mode", "document", "--wait-load", "3"], 3_000),
         ] {
             let request = request_json(&arguments);
             let request =
                 serde_json::from_value::<extractor_daemon::model::api::ExtractionRequest>(request)
                     .unwrap();
             request.validate().unwrap();
+            assert_eq!(request.settle_ms, expected_settle_ms);
         }
+    }
+
+    #[test]
+    fn rejects_wait_load_that_overflows_milliseconds() {
+        let cli = Cli::try_parse_from([
+            "scrape",
+            "--url",
+            "https://example.com",
+            "--output",
+            "page",
+            "--wait-load",
+            "18446744073709552",
+        ])
+        .unwrap();
+        let error = cli.resolve().unwrap_err();
+        assert_eq!(error.exit_code(), 2);
+        assert!(error
+            .to_string()
+            .contains("--wait-load is too large to convert to milliseconds"));
     }
 
     #[test]

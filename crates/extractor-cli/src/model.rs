@@ -17,6 +17,8 @@ pub(crate) struct ExtractionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job_timeout_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub settle_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub include_selectors: Option<Vec<String>>,
     pub exclude_selectors: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

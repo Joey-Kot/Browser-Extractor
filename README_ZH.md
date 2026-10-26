@@ -386,6 +386,7 @@ scrape \
 | `--scroll-px <PIXELS>` | 服务端默认最大 60000 | 设置每个自动发现的滚动容器允许滚动的最大累计距离，必须大于 0，并自动开启滚动。 |
 | `--timeout <SECONDS>` | `120` | CLI 到守护程序的每次 HTTP 请求超时，单位为秒。 |
 | `--scrape-timeout <SECONDS>` | 服务端默认值 | 服务端任务硬超时。CLI 会把秒转换成 `jobTimeoutMs`。 |
+| `--wait-load <SECONDS>` | 服务端默认 `1` | 采集前等待 DOM 连续保持稳定的时间，单位为秒。CLI 转换为 `settleMs`；`0` 表示跳过这次等待。 |
 | `--shadow-dom <DEPTH>` | 关闭 | 开启 Shadow DOM 穿透，并将正整数设为 `maxDepth`。 |
 | `--iframes <DEPTH>` | 关闭 | 开启同源和跨域 iframe 穿透，并将正整数设为 `maxDepth`。 |
 | `--verify-ssl` | 关闭 | 校验 HTTPS `EXTRACTOR_BASE_URL` 的证书和主机名。默认接受本地或自签名守护程序证书，不影响目标网页的 TLS。 |

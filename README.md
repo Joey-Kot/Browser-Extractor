@@ -386,6 +386,7 @@ scrape \
 | `--scroll-px <PIXELS>` | server default maximum 60000 | Sets the maximum cumulative distance for each automatically detected scroll container; must be greater than zero and enables scrolling. |
 | `--timeout <SECONDS>` | `120` | Timeout for each CLI-to-daemon HTTP request. |
 | `--scrape-timeout <SECONDS>` | server default | Server-side hard job deadline. The CLI converts seconds to `jobTimeoutMs`. |
+| `--wait-load <SECONDS>` | server default: `1` | DOM quiet period before collection. The CLI converts seconds to `settleMs`; `0` skips this wait. |
 | `--shadow-dom <DEPTH>` | disabled | Enables Shadow DOM traversal with this positive `maxDepth`. |
 | `--iframes <DEPTH>` | disabled | Enables same-origin and cross-origin iframe traversal with this positive `maxDepth`. |
 | `--verify-ssl` | off | Verifies the certificate and host name of an HTTPS `EXTRACTOR_BASE_URL`. By default the CLI accepts local/self-signed daemon certificates. It does not affect target-page TLS. |
