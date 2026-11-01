@@ -4,6 +4,11 @@ import type {
   TraversalWarning
 } from "./generated/protocol";
 import { ExtractorError } from "./protocol";
+import {
+  collectImageSourcesInPage,
+  resolveImageSource,
+  type ImageSourceSnapshot
+} from "./images";
 
 const REMOVED_ELEMENTS = new Set(["script", "style", "noscript", "template"]);
 const URL_ATTRIBUTES = new Set(["href", "src", "poster", "action", "formaction"]);
@@ -47,6 +52,7 @@ interface SerializationContext {
   frameDepth: number;
   applyUserExclusions: boolean;
   sessionId?: string;
+  pinPictureSources?: boolean;
 }
 
 interface SerializationState {
@@ -58,6 +64,7 @@ interface SerializationState {
   warningKeys: Set<string>;
   deadlineAt: number;
   operationTimeoutMs: () => number;
+  imageSources: Map<string, string>;
 }
 
 export class TraversalSerializer {
@@ -137,7 +144,8 @@ export class TraversalSerializer {
       warnings: this.warnings,
       warningKeys: this.warningKeys,
       deadlineAt: this.deadlineAt,
-      operationTimeoutMs: () => this.nextOperationTimeoutMs()
+      operationTimeoutMs: () => this.nextOperationTimeoutMs(),
+      imageSources: new Map()
     };
   }
 
@@ -171,7 +179,8 @@ export async function serializeCdpDomForTest(
     warnings: [],
     warningKeys: new Set(),
     deadlineAt: Number.POSITIVE_INFINITY,
-    operationTimeoutMs: () => 30_000
+    operationTimeoutMs: () => 30_000,
+    imageSources: new Map()
   };
   const context: SerializationContext = {
     baseUrl: "https://top.example/root/page",
@@ -194,6 +203,7 @@ async function serializeSelectedNode(
   ) {
     return "";
   }
+  await collectCdpImageSources(node, context, state);
   return contentsOnly
     ? serializeElementContents(node, context, state)
     : serializeNode(node, context, state);
@@ -236,10 +246,33 @@ async function serializeElement(
     return "";
   }
 
-  const attributes = serializeAttributes(node.attributes ?? [], context.baseUrl);
+  let rawAttributes = node.attributes ?? [];
+  if (normalizedTagName === "img") {
+    const source = imageSourceForNode(node, context, state);
+    if (source) {
+      rawAttributes = withoutResponsiveAttributes(rawAttributes);
+      const sourceIndex = rawAttributes.findIndex((name, index) => index % 2 === 0 && name.toLowerCase() === "src");
+      if (sourceIndex >= 0) {
+        rawAttributes[sourceIndex + 1] = source;
+      } else {
+        rawAttributes.push("src", source);
+      }
+    }
+  } else if (normalizedTagName === "source" && context.pinPictureSources) {
+    rawAttributes = withoutResponsiveAttributes(rawAttributes);
+  }
+  const pinPictureSources = normalizedTagName === "picture" &&
+    (node.children ?? []).some((child) =>
+      (child.localName || child.nodeName).toLowerCase() === "img" &&
+      imageSourceForNode(child, context, state) !== null
+    );
+  const childContext = context.pinPictureSources || pinPictureSources
+    ? { ...context, pinPictureSources }
+    : context;
+  const attributes = serializeAttributes(rawAttributes, context.baseUrl);
   let html = "<" + tagName + attributes + ">";
   if (!VOID_ELEMENTS.has(normalizedTagName)) {
-    html += await serializeElementContents(node, context, state);
+    html += await serializeElementContents(node, childContext, state);
     html += "</" + tagName + ">";
   }
 
@@ -306,6 +339,7 @@ async function serializeShadowRoots(
         state,
         "Shadow Root DOM capture timed out"
       );
+      await collectCdpImageSources(loadedRoot, childContext, state);
       parts.push(
         '<section data-extractor-shadow-root="' +
           escapeAttribute(rootType) +
@@ -424,6 +458,7 @@ async function serializeFrameDocument(
     frameDepth: depth,
     applyUserExclusions: false
   };
+  await collectCdpImageSources(document, childContext, state);
   const contents = body
     ? await serializeElementContents(body, childContext, state)
     : await serializeDocumentContents(document, childContext, state);
@@ -454,6 +489,131 @@ async function serializeDocumentContents(
   return body
     ? serializeElementContents(body, context, state)
     : serializeChildren(documentElement, context, state);
+}
+
+function imageSourceKey(node: CdpDomNode, context: SerializationContext): string {
+  return (context.sessionId ?? "") + ":" + node.backendNodeId;
+}
+
+function imageSourceForNode(
+  node: CdpDomNode,
+  context: SerializationContext,
+  state: SerializationState
+): string | null {
+  const attributes: Record<string, string> = {};
+  const rawAttributes = node.attributes ?? [];
+  for (let index = 0; index + 1 < rawAttributes.length; index += 2) {
+    attributes[rawAttributes[index]!.toLowerCase()] = rawAttributes[index + 1]!;
+  }
+  return state.imageSources.get(imageSourceKey(node, context)) ??
+    resolveImageSource({ attributes, baseUrl: context.baseUrl });
+}
+
+function withoutResponsiveAttributes(attributes: string[]): string[] {
+  const result: string[] = [];
+  for (let index = 0; index + 1 < attributes.length; index += 2) {
+    const name = attributes[index]!;
+    if (!["srcset", "sizes"].includes(name.toLowerCase())) {
+      result.push(name, attributes[index + 1]!);
+    }
+  }
+  return result;
+}
+
+async function collectCdpImageSources(
+  root: CdpDomNode,
+  context: SerializationContext,
+  state: SerializationState
+): Promise<void> {
+  const images: CdpDomNode[] = [];
+  function visit(node: CdpDomNode): void {
+    if (node.nodeType === 1 && (node.localName || node.nodeName).toLowerCase() === "img") {
+      images.push(node);
+    }
+    // Nested roots and frames are read separately, after their traversal limits.
+    for (const child of node.children ?? []) {
+      visit(child);
+    }
+  }
+  visit(root);
+  const cdp = state.cdp;
+  if (images.length === 0 || !cdp) {
+    return;
+  }
+
+  const objectGroup = "browser-extractor-images-" + crypto.randomUUID();
+  try {
+    for (let offset = 0; offset < images.length; offset += 32) {
+      const batch = images.slice(offset, offset + 32);
+      // Resolve the captured identities, so reordering identical images is safe.
+      const resolved = await Promise.all(batch.map(async (node) => {
+        try {
+          const response = await cdp.sendWithTimeout<{ object: { objectId?: string } }>(
+            "DOM.resolveNode",
+            { backendNodeId: node.backendNodeId, objectGroup },
+            context.sessionId,
+            state.operationTimeoutMs(),
+            state.signal,
+            "Image source lookup timed out"
+          );
+          const objectId = response.object.objectId;
+          return objectId ? { node, objectId } : null;
+        } catch (error) {
+          rethrowTerminalTraversalError(error, state);
+          return null;
+        }
+      }));
+      const handles = resolved.filter((entry) => entry !== null);
+      if (handles.length === 0) {
+        continue;
+      }
+      const response = await cdp.sendWithTimeout<{
+        result?: { value?: Array<ImageSourceSnapshot | null> };
+        exceptionDetails?: unknown;
+      }>(
+        "Runtime.callFunctionOn",
+        {
+          objectId: handles[0]!.objectId,
+          arguments: handles.map(({ objectId }) => ({ objectId })),
+          functionDeclaration: "function() { const resolveImageSource = " +
+            resolveImageSource.toString() + "; const collectImageSourcesInPage = " +
+            collectImageSourcesInPage.toString() + "; return Array.from(arguments, " +
+            "node => collectImageSourcesInPage(node)[0] ?? null); }",
+          returnByValue: true
+        },
+        context.sessionId,
+        state.operationTimeoutMs(),
+        state.signal,
+        "Image source lookup timed out"
+      );
+      const snapshots = response.result?.value;
+      if (response.exceptionDetails || !snapshots || snapshots.length !== handles.length) {
+        continue;
+      }
+      for (let index = 0; index < handles.length; index += 1) {
+        const { node } = handles[index]!;
+        const snapshot = snapshots[index];
+        const attributes = node.attributes ?? [];
+        // Attribute changes still fall back to the captured DOM snapshot.
+        if (snapshot?.source && snapshot.attributes.length === attributes.length &&
+          snapshot.attributes.every((value, offset) => value === attributes[offset])) {
+          state.imageSources.set(imageSourceKey(node, context), snapshot.source);
+        }
+      }
+    }
+  } catch (error) {
+    rethrowTerminalTraversalError(error, state);
+    // A detached node can still be serialized from its captured attributes.
+  } finally {
+    await cdp.sendWithTimeout(
+      "Runtime.releaseObjectGroup",
+      { objectGroup },
+      context.sessionId,
+      Math.max(1, Math.min(1_000, state.deadlineAt - Date.now())),
+      state.signal,
+      "Image source handle release timed out"
+    ).catch(() => undefined);
+  }
 }
 
 function findElement(node: CdpDomNode, localName: string): CdpDomNode | null {

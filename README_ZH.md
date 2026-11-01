@@ -95,12 +95,13 @@ sequenceDiagram
         opt scroll.enabled=true
             loop 直到容器停止或达到 maxDistancePx
                 Extension->>Chrome: 发现文档及相关纵向滚动容器
+                Extension->>Extension: 在虚拟列表移除节点前保留当前内容块
                 Extension->>Chrome: 以不超过 1500px 的自适应步长推进全部有效容器
                 Chrome-->>Extension: 返回更新后或稳定的 DOM
                 Extension->>Chrome: 等待 DOM 稳定并重新扫描
             end
         end
-        Extension->>Chrome: 选择 include 根节点并序列化一次快照
+        Extension->>Chrome: 序列化 include 根节点或已保留的虚拟列表内容
         opt 已开启嵌套内容穿透
             Extension->>Chrome: 序列化符合条件的 Shadow Root 和 iframe 后代
         end
@@ -182,7 +183,7 @@ stateDiagram-v2
     }
 
     note right of collecting
-        document 预滚动、根节点选择和
+        document 滚动、内容保留和
         抓取准备主要在此阶段完成。
     end note
 
@@ -207,8 +208,8 @@ stateDiagram-v2
     AdvancingAll --> Settling: 至少一个容器发生移动
     Settling --> InferringBlocks: DOM 安静期结束
     AdvancingAll --> IdleCheck: 没有容器发生移动
-    IdleCheck --> InferringBlocks: 第一次空闲检查
-    IdleCheck --> Complete: 连续空闲检查
+    IdleCheck --> InferringBlocks: 观察空闲窗口和未完成的加载
+    IdleCheck --> Complete: 空闲窗口结束或加载等待超时
 
     note right of AdvancingAll
         容器仍可滚动、尚未到底并且
@@ -219,7 +220,7 @@ stateDiagram-v2
     Complete --> [*]
 ```
 
-document 模式开启滚动后会复用其中的容器发现、推进、稳定等待和空闲检查部分，完成后只生成一次最终根节点快照，不累计内容块。
+document 模式开启滚动后会保留每个内容块的最新版本、周围的文本及未被内容块覆盖的子树。如果滚动期间旧内容被移除或节点被复用，就合并到 `section[data-extractor-scroll-history]`，并让前言位于条目之前、结语位于后续加载的条目之后；没有发生内容移除时仍返回完整的最终根节点快照。不开启滚动时，document 模式仍只取一次快照。
 
 ### Shadow Root 和 iframe 穿透状态机图
 
@@ -362,7 +363,7 @@ scrape \
   --path ./Temp-Scrape
 ```
 
-document 模式用于生成一次文档快照。如果没有提供 `--scroll-px`，document 模式不会滚动：
+document 模式输出一份文档。如果没有提供 `--scroll-px`，它只取一次快照；开启滚动后，若旧内容被卸载，会保留并合并这些内容块：
 
 ```bash
 scrape \
@@ -686,12 +687,12 @@ JSON 中出现未知字段会返回 HTTP 400。
 | 字段 | 默认值 | 作用 |
 |---|---:|---|
 | `url` | 必填 | 目标 HTTP 或 HTTPS URL，其他协议会被拒绝。 |
-| `mode` | `document` | `document` 一次抓取选中的根节点；`feed` 自动滚动并持续收集、拼接和去重内容块。 |
+| `mode` | `document` | `document` 抓取选中的根节点，开启滚动时会保留被卸载的内容；`feed` 自动滚动并持续发送去重后的内容块。 |
 | `waitMs` | `30000` | POST 请求等待任务完成的时间。设为 `0` 会立即返回任务快照，同时任务继续执行。该值受两个硬超时共同限制。 |
 | `jobTimeoutMs` | `120000` | 整个任务请求的硬超时，最大不能超过 `executor.job_timeout_ms`，且必须大于 0。 |
-| `loadTimeoutMs` | `30000` | 分别用于页面导航、`waitForSelector` 和每次嵌套内容抓取的超时，必须大于 0。 |
+| `loadTimeoutMs` | `30000` | 分别限制页面导航、`waitForSelector`、首次 DOM 稳定等待、滚动到底后的加载观察，以及每次嵌套内容抓取的时间，必须大于 0。 |
 | `settleMs` | `1000` | 页面就绪后、正式抓取前要求 DOM 保持安静的时间。 |
-| `visibilityMode` | `background` | 可选 `background`、`foreground`、`auto`。`auto` 当前等同于 `background`。 |
+| `visibilityMode` | `background` | 可选 `background`、`foreground`、`auto`。`auto` 等同于 `background`。后台任务通过 CDP 模拟页面可见和聚焦，让页面脚本和渲染继续运行，用户当前选中的标签页保持不变。 |
 | `waitForSelector` | `null` | 可选的页面就绪 CSS 选择器，只负责等待，不会限制最终提取范围。 |
 | `includeSelectors` | `["body"]` | 两种模式下都表示提取根节点；feed 模式还会用它限制内容块推断和内部滚动容器发现范围。省略或传空数组时统一变为 `["body"]`；显式选择器必须命中，不会回退到 `body`。 |
 | `excludeSelectors` | `[]` | 从克隆结果中删除的子树。选择节点时还会固定删除 `script`、`style`、`noscript`、`template`。 |
@@ -805,7 +806,7 @@ feed 模式只要求明确填写 `scroll.enabled=true`，其他滚动参数都�
 }
 ```
 
-省略的字段会使用 `includeSelectors=["body"]`、`maxDistancePx=60000`、`settleMs=700` 和 `dedupe={}`（即 `auto` 策略）。扩展会自动发现文档滚动元素以及选中范围内尺寸足够、可见且存在纵向溢出的内部容器；每轮滚动前收集当前 DOM 中的语义元素、重复兄弟结构和文本内容块。虚拟列表移除旧节点前，这些内容已经被发送并保留，因此不会再退化为最终 `body` 快照。下面的完整示例把每个滚动容器的预算限制为 30000 像素，并使用 `data-post-id` 优先去重：
+省略的字段会使用 `includeSelectors=["body"]`、`maxDistancePx=60000`、`settleMs=700` 和 `dedupe={}`（即 `auto` 策略）。扩展会发现文档滚动元素以及与选中范围相关、可见且存在纵向溢出的内部容器，包括较小的滚动区域，并跳过排除的子树。每轮滚动前收集当前 DOM 中的语义元素、重复兄弟结构和文本内容块，在虚拟列表移除旧节点前保留这些内容。到达当前底部后，会在有限的空闲窗口内观察新内容和未完成的 Fetch/XHR 请求，避免两次没有移动就提前结束。下面的完整示例把每个滚动容器的预算限制为 30000 像素，并使用 `data-post-id` 优先去重：
 
 ```bash
 curl -sS -X POST http://127.0.0.1:17320/v1/extractions \
@@ -853,7 +854,7 @@ curl -sS -X POST http://127.0.0.1:17320/v1/extractions \
 
 | 策略 | 去重键的选择方式 |
 |---|---|
-| `auto` | 依次尝试 `data-post-id`、`data-item-id`、`data-id`、`data-key`、首选链接，最后使用内容块 HTML 的 SHA-256。 |
+| `auto` | 依次尝试内容 ID（`data-post-id`、`data-item-id`）、显式链接或语义明确的永久链接（书签、时间戳）、通用 ID（`data-id`、`data-key`），最后使用 HTML 的 SHA-256；普通标题链接以及共同的作者主页或操作链接不能单独标识整条内容。 |
 | `attribute` | 使用 `dedupe.attribute` 指定的属性值；属性不存在时退回到内容块 HTML 哈希。 |
 | `link` | 使用 `dedupe.selector` 选中的链接，未配置时使用第一个 `a[href]`；没有链接时退回到内容块 HTML 哈希。 |
 | `html_hash` | 直接使用内容块 HTML 的 SHA-256。 |

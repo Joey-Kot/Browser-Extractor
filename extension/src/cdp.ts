@@ -45,6 +45,7 @@ export class CdpSession {
   private readonly childTargetsByFrameId = new Map<string, ChildTarget>();
   private readonly childTargetsBySessionId = new Map<string, ChildTarget>();
   private readonly childTargetWaiters = new Set<() => void>();
+  private readonly pendingPageRequests = new Set<string>();
   private attached = false;
   private frameAutoAttachEnabled = false;
   private readonly eventRouter: (
@@ -62,6 +63,14 @@ export class CdpSession {
       }
       const session = source as DebuggerSession;
       const eventParams = (params ?? {}) as Record<string, unknown>;
+      if (!session.sessionId && typeof eventParams.requestId === "string") {
+        if (method === "Network.requestWillBeSent" &&
+          ["Fetch", "XHR"].includes(String(eventParams.type))) {
+          this.pendingPageRequests.add(eventParams.requestId);
+        } else if (method === "Network.loadingFinished" || method === "Network.loadingFailed") {
+          this.pendingPageRequests.delete(eventParams.requestId);
+        }
+      }
       if (method === "Target.attachedToTarget") {
         this.handleAttachedTarget(eventParams);
       } else if (method === "Target.detachedFromTarget") {
@@ -81,7 +90,10 @@ export class CdpSession {
       await Promise.all([
         this.send("Page.enable"),
         this.send("Runtime.enable"),
-        this.send("Network.enable")
+        this.send("Network.enable"),
+        // Keep rendering and visibility-gated loaders running in an inactive
+        // job tab. This does not activate the tab or focus the browser window.
+        this.send("Emulation.setFocusEmulationEnabled", { enabled: true })
       ]);
     } catch (error) {
       throw new ExtractorError(
@@ -137,6 +149,10 @@ export class CdpSession {
         this.listeners.delete(method);
       }
     };
+  }
+
+  hasPendingPageRequests(): boolean {
+    return this.pendingPageRequests.size > 0;
   }
 
   async navigate(
@@ -378,6 +394,7 @@ export class CdpSession {
   }
 
   async detach(): Promise<void> {
+    this.pendingPageRequests.clear();
     chrome.debugger.onEvent.removeListener(this.eventRouter);
     this.listeners.clear();
     if (!this.attached) {

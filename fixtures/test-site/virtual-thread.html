@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <title>虚拟列表中的主帖与回复</title>
+    <style>
+      #viewport { height: 280px; overflow-y: auto; border: 1px solid; }
+      #spacer { height: 2400px; position: relative; }
+      #rows { position: absolute; width: 100%; }
+      .entry { height: 200px; box-sizing: border-box; padding: 12px; }
+      #ignored { height: 40px; overflow-y: auto; }
+    </style>
+  </head>
+  <body>
+    <main data-id="thread-container">
+      <h1>主帖和回复应同时保留</h1>
+      <div id="viewport"><div id="spacer"><div id="rows"></div></div></div>
+      <aside id="ignored"><div style="height: 200px">不应收集或滚动的侧栏</div></aside>
+    </main>
+    <script>
+      const options = new URL(location.href).searchParams;
+      const reuse = options.has("reuse");
+      const anonymous = options.has("anonymous");
+      const generic = options.has("generic");
+      const viewport = document.querySelector("#viewport");
+      const rows = document.querySelector("#rows");
+      function render() {
+        const start = Math.min(9, Math.floor(viewport.scrollTop / 200));
+        if (!reuse) rows.replaceChildren();
+        rows.style.transform = "translateY(" + start * 200 + "px)";
+        for (let offset = 0; offset < 3; offset += 1) {
+          let article = rows.children[offset];
+          if (!article) {
+            article = document.createElement(generic ? "div" : "article");
+            article.className = "entry";
+            rows.append(article);
+          }
+          const id = start + offset;
+          if (!anonymous) article.dataset.key = "reused-slot-" + offset;
+          article.innerHTML = "<a href='/profiles/writer'>Writer</a>" +
+            (anonymous ? "" : "<a href='/entries/" + id + "'><time>" + id + "</time></a>") +
+            "<p data-record='" + id + "'>" + (id === 0 ? "主帖内容" : "回复内容 " + id) + "</p>";
+        }
+      }
+      viewport.addEventListener("scroll", render);
+      render();
+    </script>
+  </body>
+</html>

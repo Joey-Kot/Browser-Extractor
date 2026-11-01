@@ -1,9 +1,11 @@
 import { CdpSession } from "./cdp";
+import { outermostNodes } from "./selectors";
 
 export interface AutoScrollAdvance {
   discoveredContainers: number;
   advancedContainers: number;
   distancePx: number;
+  budgetAvailable: boolean;
 }
 
 interface ScrollContainerState {
@@ -17,18 +19,21 @@ interface AutoScrollRegistry {
 export async function advanceScrollableContainers(
   cdp: CdpSession,
   includeSelectors: string[],
-  maxDistancePx: number
+  maxDistancePx: number,
+  excludeSelectors: string[] = []
 ): Promise<AutoScrollAdvance> {
   const helpers = [
     calculateScrollStep,
+    outermostNodes,
     getAutoScrollRegistryInPage,
     discoverScrollableContainersInPage,
     isScrollableElementInPage,
+    isExcludedContainerInPage,
     isRelatedToScopesInPage
   ]
     .map((helper) => helper.toString())
     .join(";\n");
-  const options = JSON.stringify({ includeSelectors, maxDistancePx });
+  const options = JSON.stringify({ includeSelectors, maxDistancePx, excludeSelectors });
   return cdp.evaluate<AutoScrollAdvance>(
     "(() => {" +
       helpers +
@@ -55,11 +60,13 @@ export function calculateScrollStep(
 function advanceScrollableContainersInPage(options: {
   includeSelectors: string[];
   maxDistancePx: number;
+  excludeSelectors: string[];
 }): AutoScrollAdvance {
   const registry = getAutoScrollRegistryInPage();
-  const containers = discoverScrollableContainersInPage(options.includeSelectors);
+  const containers = discoverScrollableContainersInPage(options.includeSelectors, options.excludeSelectors);
   let advancedContainers = 0;
   let distancePx = 0;
+  let budgetAvailable = false;
 
   for (const container of containers) {
     let state = registry.states.get(container);
@@ -71,6 +78,7 @@ function advanceScrollableContainersInPage(options: {
     if (remainingDistancePx <= 0) {
       continue;
     }
+    budgetAvailable = true;
 
     const before = container.scrollTop;
     const maximumPosition = Math.max(0, container.scrollHeight - container.clientHeight);
@@ -78,7 +86,8 @@ function advanceScrollableContainersInPage(options: {
       continue;
     }
     const stepPx = calculateScrollStep(container.clientHeight, remainingDistancePx);
-    container.scrollTop = Math.min(maximumPosition, before + stepPx);
+    // CSS smooth scrolling must not hide movement from distance accounting.
+    container.scrollTo({ top: Math.min(maximumPosition, before + stepPx), behavior: "instant" });
     const moved = Math.max(0, container.scrollTop - before);
     if (moved <= 0) {
       continue;
@@ -91,7 +100,8 @@ function advanceScrollableContainersInPage(options: {
   return {
     discoveredContainers: containers.length,
     advancedContainers,
-    distancePx
+    distancePx,
+    budgetAvailable
   };
 }
 
@@ -107,19 +117,17 @@ function getAutoScrollRegistryInPage(): AutoScrollRegistry {
   return holder.__browserExtractorAutoScrollV4;
 }
 
-function discoverScrollableContainersInPage(includeSelectors: string[]): Element[] {
-  const scopes = new Set<Element>();
-  for (const selector of includeSelectors) {
-    for (const scope of document.querySelectorAll(selector)) {
-      scopes.add(scope);
-    }
-  }
+function discoverScrollableContainersInPage(includeSelectors: string[], excludeSelectors: string[]): Element[] {
+  const scopes = new Set(outermostNodes(includeSelectors.flatMap((selector) =>
+    [...document.querySelectorAll(selector)]
+  )));
 
   const containers: Element[] = [];
   const documentScroller = document.scrollingElement;
   if (
     documentScroller &&
-    documentScroller.scrollHeight > documentScroller.clientHeight + 1
+    documentScroller.clientHeight > 0 &&
+    !isExcludedContainerInPage(documentScroller, excludeSelectors, scopes)
   ) {
     containers.push(documentScroller);
   }
@@ -128,6 +136,7 @@ function discoverScrollableContainersInPage(includeSelectors: string[]): Element
     if (
       element === documentScroller ||
       !isRelatedToScopesInPage(element, scopes) ||
+      isExcludedContainerInPage(element, excludeSelectors, scopes) ||
       !isScrollableElementInPage(element)
     ) {
       continue;
@@ -135,6 +144,14 @@ function discoverScrollableContainersInPage(includeSelectors: string[]): Element
     containers.push(element);
   }
   return containers;
+}
+
+function isExcludedContainerInPage(element: Element, selectors: string[], scopes: Set<Element>): boolean {
+  return selectors.some((selector) => {
+    const excluded = element.closest(selector);
+    return excluded !== null &&
+      ![...scopes].some((scope) => excluded !== scope && excluded.contains(scope));
+  });
 }
 
 function isRelatedToScopesInPage(
@@ -150,7 +167,6 @@ function isRelatedToScopesInPage(
 }
 
 function isScrollableElementInPage(element: Element): boolean {
-  const minimumSizePx = 80;
   if (
     element instanceof HTMLTextAreaElement ||
     element instanceof HTMLSelectElement
@@ -168,8 +184,10 @@ function isScrollableElementInPage(element: Element): boolean {
   }
   const rect = element.getBoundingClientRect();
   return (
-    rect.width >= minimumSizePx &&
-    rect.height >= minimumSizePx &&
+    element.clientWidth > 0 && element.clientHeight > 0 &&
+    rect.width > 0 && rect.height > 0 &&
+    rect.bottom > 0 && rect.right > 0 &&
+    rect.top < window.innerHeight && rect.left < window.innerWidth &&
     element.scrollHeight > element.clientHeight + 1
   );
 }

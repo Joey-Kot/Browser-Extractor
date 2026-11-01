@@ -13,7 +13,8 @@ import {
   TraversalSerializer,
   type CdpDomNode
 } from "../src/traversal";
-import type { CdpSession } from "../src/cdp";
+import { CdpSession } from "../src/cdp";
+import { resolveImageSource, type ImageSourceInput } from "../src/images";
 
 const encoder = new TextEncoder();
 let nextNodeId = 1;
@@ -117,6 +118,36 @@ assertNumber(
   "scroll step respects the remaining distance budget"
 );
 
+const svgPlaceholder = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
+const imageCases: Array<[string, Omit<ImageSourceInput, "baseUrl">, string | null]> = [
+  ["lazy relative image", { attributes: { src: svgPlaceholder, "data-src": "../photo.jpg" } }, "https://top.example/photo.jpg"],
+  ["lazy original image", { attributes: { src: svgPlaceholder, "data-original": "/original.jpg" } }, "https://top.example/original.jpg"],
+  ["lazy srcset", { attributes: { src: svgPlaceholder, "data-srcset": "/small.jpg 400w, /large.jpg 1200w" } }, "https://top.example/large.jpg"],
+  ["density srcset", { attributes: { src: svgPlaceholder, srcset: "/one.jpg 1x, /two.jpg 2x" } }, "https://top.example/two.jpg"],
+  ["currentSrc precedes srcset", { attributes: { src: "/fallback.jpg", srcset: "/one.jpg 1x, /two.jpg 2x" }, currentSrc: "https://top.example/one.jpg" }, "https://top.example/one.jpg"],
+  ["selected picture source", { attributes: { src: svgPlaceholder }, sourceSets: ["/picture.jpg 2x"] }, "https://top.example/picture.jpg"],
+  ["placeholder currentSrc falls back", { attributes: { src: svgPlaceholder, "data-lazy-src": "/lazy.jpg" }, currentSrc: svgPlaceholder }, "https://top.example/lazy.jpg"],
+  ["data URL commas in srcset", { attributes: { srcset: svgPlaceholder + " 1x, /actual.jpg 2x" } }, "https://top.example/actual.jpg"],
+  ["commas inside image URLs", { attributes: { srcset: "/image,a.jpg 1x, /image,b.jpg 2x" } }, "https://top.example/image,b.jpg"],
+  ["invalid srcset descriptors", { attributes: { "data-srcset": "/bad.jpg -2x, /also-bad.jpg 3w 2x, /good.jpg 2x" } }, "https://top.example/good.jpg"],
+  ["real src is preserved", { attributes: { src: "/photo.jpg", "data-original": "/other.jpg" } }, "https://top.example/photo.jpg"],
+  ["SVG artwork is preserved", { attributes: { src: "/artwork.svg", "data-src": "/other.jpg" } }, "https://top.example/artwork.svg"],
+  ["inline SVG without fallback is left unchanged", { attributes: { src: svgPlaceholder } }, null],
+  ["placeholder without fallback is left unchanged", { attributes: { src: "/placeholder.svg" } }, null],
+  ["named placeholder is replaced", { attributes: { src: "/placeholder.svg", "data-src": "/photo.jpg" } }, "https://top.example/photo.jpg"],
+  ["noscript fallback", { attributes: { src: svgPlaceholder }, fallbackSrc: "/fallback.jpg" }, "https://top.example/fallback.jpg"],
+  ["unsafe and empty sources are ignored", { attributes: { "data-src": "javascript:alert(1)", "data-original": " " } }, null],
+  ["boolean lazy marker is ignored", { attributes: { "data-original": "true" } }, null],
+  ["fragment source is not an image URL", { attributes: { src: "#" } }, null]
+];
+for (const [label, input, expected] of imageCases) {
+  assertEqual(
+    resolveImageSource({ ...input, baseUrl: "https://top.example/root/page" }) ?? "<none>",
+    expected ?? "<none>",
+    label
+  );
+}
+
 const traversalOptions: TraversalOptions = {
   shadowDom: { enabled: true, maxDepth: 1 },
   iframes: { enabled: true, maxDepth: 1 }
@@ -218,6 +249,95 @@ assertIncludes(
 );
 assertIncludes(traversed, "frame shadow content", "Shadow Root inside iframe");
 assertNotIncludes(traversed, "too deep frame", "frame depth limit");
+
+const lazyImage = element("img", {
+  attributes: ["src", svgPlaceholder, "data-src", "../photo.jpg", "alt", "lazy photo"]
+});
+const lazyImageHtml = await serializeCdpDomForTest(lazyImage, traversalOptions);
+assertIncludes(lazyImageHtml, 'src="https://top.example/photo.jpg"', "CDP attribute fallback");
+assertIncludes(lazyImageHtml, 'alt="lazy photo"', "image alt retained");
+assertEqual(lazyImage.attributes?.[1] ?? "", svgPlaceholder, "CDP capture attributes remain unchanged");
+const nestedImages = await serializeCdpDomForTest(
+  element("main", {
+    children: [
+      element("image-card", {
+        shadowRoots: [fragment("open", [element("img", {
+          attributes: ["src", svgPlaceholder, "data-original", "/shadow.jpg"]
+        })])]
+      }),
+      element("iframe", {
+        contentDocument: documentNode("https://frame.example/articles/page", [
+          element("html", { children: [element("body", { children: [element("img", {
+            attributes: ["src", svgPlaceholder, "data-src", "../frame.jpg"]
+          })] })] })
+        ])
+      })
+    ]
+  }),
+  traversalOptions
+);
+assertIncludes(nestedImages, 'src="https://top.example/shadow.jpg"', "Shadow Root image recovery");
+assertIncludes(nestedImages, 'src="https://frame.example/frame.jpg"', "frame image base URL");
+
+const responsiveImage = element("img", {
+  attributes: ["src", "/fallback.jpg", "srcset", "/small.jpg 1x, /large.jpg 2x"]
+});
+let imageSnapshotAttributes = [...responsiveImage.attributes!];
+let imageHandleReleases = 0;
+const imageCdp = {
+  enableFrameTraversal: async () => undefined,
+  sendWithTimeout: async (method: string) => {
+    if (method === "DOM.enable") return {};
+    if (method === "DOM.getDocument") return { root: documentNode("https://top.example/root/page", []) };
+    if (method === "DOM.describeNode") return { node: responsiveImage };
+    if (method === "DOM.resolveNode") return { object: { objectId: "image-root" } };
+    if (method === "Runtime.callFunctionOn") {
+      return { result: { value: [{ attributes: imageSnapshotAttributes, source: "https://top.example/small.jpg" }] } };
+    }
+    if (method === "Runtime.releaseObjectGroup") {
+      imageHandleReleases += 1;
+      return {};
+    }
+    throw new Error("unexpected image CDP command: " + method);
+  }
+} as unknown as CdpSession;
+const imageSerializer = new TraversalSerializer(
+  imageCdp, traversalOptions, new AbortController().signal, Date.now() + 30_000, 30_000
+);
+await imageSerializer.initialize();
+assertIncludes(
+  await imageSerializer.serializeBackendNode(responsiveImage.backendNodeId, new Set()),
+  'src="https://top.example/small.jpg"',
+  "CDP uses the live selected image rather than the largest candidate"
+);
+imageSnapshotAttributes = ["src", "/different-node.jpg"];
+assertIncludes(
+  await imageSerializer.serializeBackendNode(responsiveImage.backendNodeId, new Set()),
+  'src="https://top.example/large.jpg"',
+  "stale live metadata falls back to captured attributes"
+);
+assertNumber(imageHandleReleases, 2, "image handles are released");
+
+const pinnedImage = await serializeCdpDomForTest(
+  element("picture", {
+    children: [
+      element("source", { attributes: ["srcset", svgPlaceholder, "sizes", "100vw"] }),
+      element("img", {
+        attributes: ["src", svgPlaceholder, "srcset", svgPlaceholder, "sizes", "100vw", "data-src", "/real.jpg"]
+      })
+    ]
+  }),
+  traversalOptions
+);
+assertIncludes(pinnedImage, 'src="https://top.example/real.jpg"', "recovered picture source");
+assertNotIncludes(pinnedImage, "srcset=", "stale picture and image source sets removed");
+assertNotIncludes(pinnedImage, "sizes=", "stale responsive sizes removed");
+const unresolvedImage = await serializeCdpDomForTest(
+  element("img", { attributes: ["src", svgPlaceholder, "srcset", svgPlaceholder + " 1x"] }),
+  traversalOptions
+);
+assertIncludes(unresolvedImage, "data:image/svg+xml", "unresolved SVG is retained");
+assertIncludes(unresolvedImage, "srcset=", "unresolved responsive attributes retained");
 
 const traversalDisabled = await serializeCdpDomForTest(
   element("browser-card", {
@@ -389,6 +509,46 @@ const foreignMarkup = await serializeCdpDomForTest(
   traversalOptions
 );
 assertIncludes(foreignMarkup, "<linearGradient", "foreign-element tag casing");
+
+const chromeDescriptor = Object.getOwnPropertyDescriptor(globalThis, "chrome");
+let debuggerEvent: ((source: { tabId: number; sessionId?: string }, method: string, params: object) => void) | null = null;
+Object.defineProperty(globalThis, "chrome", {
+  configurable: true,
+  value: {
+    debugger: {
+      attach: async () => undefined,
+      detach: async () => undefined,
+      sendCommand: async () => ({}),
+      onEvent: {
+        addListener: (listener: typeof debuggerEvent) => { debuggerEvent = listener; },
+        removeListener: () => { debuggerEvent = null; }
+      }
+    }
+  }
+});
+try {
+  const network = new CdpSession(7);
+  await network.attach();
+  const emit = (method: string, params: object, source: { tabId: number; sessionId?: string } = { tabId: 7 }) => {
+    debuggerEvent!(source, method, params);
+  };
+  emit("Network.requestWillBeSent", { requestId: "image", type: "Image" });
+  emit("Network.requestWillBeSent", { requestId: "child", type: "Fetch" }, { tabId: 7, sessionId: "child" });
+  emit("Network.requestWillBeSent", { requestId: "other", type: "Fetch" }, { tabId: 8 });
+  assertNumber(Number(network.hasPendingPageRequests()), 0, "unrelated requests do not block scrolling");
+  emit("Network.requestWillBeSent", { requestId: "fetch", type: "Fetch" });
+  emit("Network.requestWillBeSent", { requestId: "xhr", type: "XHR" });
+  emit("Network.loadingFinished", { requestId: "fetch" });
+  assertNumber(Number(network.hasPendingPageRequests()), 1, "remaining XHR keeps the page loading");
+  emit("Network.loadingFailed", { requestId: "xhr" });
+  assertNumber(Number(network.hasPendingPageRequests()), 0, "failed requests are cleared");
+  emit("Network.requestWillBeSent", { requestId: "pending", type: "Fetch" });
+  await network.detach();
+  assertNumber(Number(network.hasPendingPageRequests()), 0, "cleanup clears pending requests");
+} finally {
+  if (chromeDescriptor) Object.defineProperty(globalThis, "chrome", chromeDescriptor);
+  else Reflect.deleteProperty(globalThis, "chrome");
+}
 
 console.log("extension algorithm tests passed");
 

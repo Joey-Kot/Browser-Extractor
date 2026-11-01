@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <title>图片地址补全</title>
+    <base href="/image-assets/">
+  </head>
+  <body>
+    <article id="images">
+      <h1>图片地址补全</h1>
+      <img id="lazy" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" data-src="../photos/lazy.jpg" alt="懒加载图片">
+      <img id="original" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" data-original="original.jpg" alt="原始地址">
+      <img id="lazy-srcset" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" data-srcset="small.jpg 400w, large.jpg 1200w" alt="懒加载候选集">
+      <img id="responsive" src="fallback.jpg" srcset="one.jpg 1x, two.jpg 2x" alt="浏览器选图">
+      <picture>
+        <source media="(min-width: 1px)" srcset="picture.jpg">
+        <img id="picture" src="fallback.jpg" alt="picture 选图">
+      </picture>
+      <img id="artwork" src="artwork.svg" alt="真实 SVG">
+      <img id="unresolved" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" alt="没有备用地址">
+      <img id="noscript-fallback" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" alt="noscript 备用图片">
+      <noscript><img src="noscript.jpg" alt="备用图片"></noscript>
+      <img id="unsafe" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" data-src="javascript:alert(1)" alt="无效候选">
+      <aside><img src="excluded.jpg" alt="应排除"></aside>
+      <image-card></image-card>
+      <iframe title="图片 iframe" srcdoc="<!doctype html><html><head><base href='/frame-assets/'></head><body><img id='frame-image' src='data:image/svg+xml,%3Csvg/%3E' data-src='frame.jpg'><img id='frame-responsive' src='fallback.jpg' srcset='one.jpg 1x, two.jpg 2x'></body></html>"></iframe>
+    </article>
+    <script>
+      const shadow = document.querySelector("image-card").attachShadow({ mode: "closed" });
+      shadow.innerHTML = "<img id='shadow-image' src='data:image/svg+xml,%3Csvg/%3E' data-src='shadow.jpg'><img id='shadow-responsive' src='fallback.jpg' srcset='one.jpg 1x, two.jpg 2x'>";
+    </script>
+  </body>
+</html>

@@ -95,12 +95,13 @@ sequenceDiagram
         opt scroll.enabled=true
             loop Until containers stop or reach maxDistancePx
                 Extension->>Chrome: Discover document and related vertical containers
+                Extension->>Extension: Retain current blocks before virtualized nodes leave
                 Extension->>Chrome: Advance every eligible container with an adaptive step up to 1500 px
                 Chrome-->>Extension: Updated or stable DOM
                 Extension->>Chrome: Wait for DOM settle and rescan
             end
         end
-        Extension->>Chrome: Select include roots and serialize one snapshot
+        Extension->>Chrome: Serialize selected roots or retained virtualized blocks
         opt Nested traversal enabled
             Extension->>Chrome: Serialize eligible Shadow Roots and iframe descendants
         end
@@ -182,7 +183,7 @@ stateDiagram-v2
     }
 
     note right of collecting
-        Document pre-scroll, root selection,
+        Document scrolling, content retention,
         and capture preparation occur here.
     end note
 
@@ -207,8 +208,8 @@ stateDiagram-v2
     AdvancingAll --> Settling: At least one container moved
     Settling --> InferringBlocks: DOM quiet period completed
     AdvancingAll --> IdleCheck: No container moved
-    IdleCheck --> InferringBlocks: First idle pass
-    IdleCheck --> Complete: Consecutive idle pass
+    IdleCheck --> InferringBlocks: Observe idle window and pending loads
+    IdleCheck --> Complete: Idle window or load timeout exhausted
 
     note right of AdvancingAll
         A container remains eligible while it is
@@ -219,7 +220,7 @@ stateDiagram-v2
     Complete --> [*]
 ```
 
-Document mode with scrolling enabled reuses the discovery, advance, settle, and idle portions of this loop, then takes one final selected-root snapshot instead of accumulating content blocks.
+Document mode with scrolling enabled retains the latest version of each inferred block, surrounding text, and uncovered subtrees. If blocks disappear or are reused during scrolling, it merges them inside `section[data-extractor-scroll-history]`, keeping introductory text before records and conclusions after newly loaded records; otherwise it returns the full final selected-root snapshot. Without scrolling, document mode still takes one snapshot.
 
 ### Shadow Root and iframe traversal state machine
 
@@ -362,7 +363,7 @@ scrape \
   --path ./Temp-Scrape
 ```
 
-Use document mode for one document snapshot. Document mode does not scroll unless `--scroll-px` is present:
+Use document mode for one document result. It does not scroll unless `--scroll-px` is present; when scrolling evicts earlier content, those blocks are retained and merged:
 
 ```bash
 scrape \
@@ -686,12 +687,12 @@ Unknown JSON fields are rejected with HTTP 400.
 | Field | Default | Meaning |
 |---|---:|---|
 | `url` | required | Target HTTP or HTTPS URL. Other schemes are rejected. |
-| `mode` | `document` | `document` captures selected roots once; `feed` automatically scrolls and continuously collects, stitches, and deduplicates content blocks. |
+| `mode` | `document` | `document` captures selected roots, retaining evicted blocks when scrolling; `feed` automatically scrolls and streams deduplicated content blocks. |
 | `waitMs` | `30000` | How long the POST request waits for completion. `0` returns a job snapshot immediately. It is capped by both hard deadlines. |
 | `jobTimeoutMs` | `120000` | Requested hard deadline for the whole job, capped by `executor.job_timeout_ms`. Must be greater than zero. |
-| `loadTimeoutMs` | `30000` | Timeout applied separately to navigation, `waitForSelector`, and each nested traversal capture. Must be greater than zero. |
+| `loadTimeoutMs` | `30000` | Timeout applied separately to navigation, `waitForSelector`, initial settling, bottom-of-scroll loading observation, and each nested traversal capture. Must be greater than zero. |
 | `settleMs` | `1000` | Required DOM quiet period after load/readiness and before capture. |
-| `visibilityMode` | `background` | `background`, `foreground`, or `auto`. `auto` currently behaves as `background`. |
+| `visibilityMode` | `background` | `background`, `foreground`, or `auto`. `auto` behaves as `background`. Inactive job tabs use CDP focus emulation so page scripts and rendering can run while the user's selected tab stays active. |
 | `waitForSelector` | `null` | Optional CSS selector used only as a readiness condition. It does not limit captured output. |
 | `includeSelectors` | `["body"]` | Content roots in both modes. In feed mode they also bound content-block inference and internal scroll-container discovery. Omitted or empty arrays become `["body"]`. Explicit selectors must match and never fall back to `body`. |
 | `excludeSelectors` | `[]` | Subtrees removed from cloned output. `script`, `style`, `noscript`, and `template` are always removed from selected clones. |
@@ -805,7 +806,7 @@ Feed mode requires only `scroll.enabled=true`. All other scroll fields may be om
 }
 ```
 
-Omitted fields use `includeSelectors=["body"]`, `maxDistancePx=60000`, `settleMs=700`, and `dedupe={}` (`auto` strategy). The extension automatically discovers the document scrolling element plus visible, sufficiently large internal containers with vertical overflow inside the selected roots. Before each scroll it collects semantic elements, repeated sibling structures, and textual content blocks from the current DOM. Virtualized items are therefore retained before the page removes them; feed mode no longer falls back to one final `body` snapshot. The following example limits each container to 30000 pixels and prefers `data-post-id` for deduplication:
+Omitted fields use `includeSelectors=["body"]`, `maxDistancePx=60000`, `settleMs=700`, and `dedupe={}` (`auto` strategy). The extension discovers the document scrolling element plus visible internal containers with vertical overflow related to the selected roots, including small containers and excluding unwanted subtrees. Before each scroll it collects semantic elements, repeated sibling structures, and textual content blocks from the current DOM, retaining virtualized items before removal. At the current bottom, capture observes a bounded idle window and outstanding Fetch/XHR requests instead of stopping after two unsuccessful movements. The following example limits each container to 30000 pixels and prefers `data-post-id` for deduplication:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:17320/v1/extractions \
@@ -853,7 +854,7 @@ The extension advances all currently detected eligible vertical containers and r
 
 | Strategy | Key selection |
 |---|---|
-| `auto` | `data-post-id`, then `data-item-id`, `data-id`, `data-key`, a preferred link, then SHA-256 of content-block HTML. |
+| `auto` | Content IDs (`data-post-id`, `data-item-id`), explicit or semantic permalinks (bookmark or timestamp), generic IDs (`data-id`, `data-key`), then SHA-256 of content-block HTML. Ordinary heading links and shared profile/action links do not identify an enclosing block. |
 | `attribute` | Value of `dedupe.attribute`, falling back to the content-block HTML hash when missing. |
 | `link` | Link selected by `dedupe.selector`, or the first `a[href]`, falling back to the content-block HTML hash. |
 | `html_hash` | SHA-256 of the content-block HTML. |

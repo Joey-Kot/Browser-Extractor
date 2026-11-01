@@ -21,9 +21,11 @@ import {
   waitForDomSettle,
   waitForSelector
 } from "./selectors";
+import type { FeedCandidate } from "./selectors";
 import { TraversalSerializer } from "./traversal";
 
 const IDLE_SCROLL_PASSES_TO_STOP = 2;
+const MINIMUM_IDLE_OBSERVATION_MS = 2_500;
 
 export interface CaptureRuntime {
   requestId: string;
@@ -52,7 +54,10 @@ export async function executeCapture(runtime: CaptureRuntime): Promise<void> {
   if (request.waitForSelector) {
     await waitForSelector(cdp, request.waitForSelector, request.loadTimeoutMs, signal);
   }
-  await waitForDomSettle(cdp, request.settleMs);
+  await waitForDomSettle(cdp, request.settleMs, Math.min(
+    request.loadTimeoutMs, runtime.deadlineAt - Date.now()
+  ));
+  assertCaptureActive(runtime);
   await assertIncludeSelectorsMatch(cdp, includeSelectors);
   await runtime.progress("collecting");
 
@@ -85,16 +90,64 @@ async function captureDocument(
   serializer: TraversalSerializer | null,
   includeSelectors: string[]
 ): Promise<void> {
-  const scrollRounds = runtime.request.scroll.enabled
-    ? await scrollDocumentToEnd(runtime, includeSelectors)
-    : 0;
-  const capture = serializer
-    ? await extractTraversedDocument(runtime, serializer, includeSelectors)
-    : await extractDocument(
-        runtime.cdp,
-        includeSelectors,
-        runtime.request.excludeSelectors
-      );
+  const retained = new Map<string, {
+    html: string; autoKey: string | null; nodePosition: number; nodeKey: string
+  }>();
+  const nodeKeys = new Map<string, string>();
+  const orderedKeys: string[] = [];
+  const scrolling = runtime.request.scroll.enabled
+    ? await captureAutomaticContent(runtime, serializer, includeSelectors, async (key, candidate) => {
+        const previousKey = nodeKeys.get(candidate.nodeKey);
+        const previous = previousKey === undefined ? undefined : retained.get(previousKey);
+        if (previousKey !== undefined && previousKey !== key && previous &&
+          previous.nodeKey === candidate.nodeKey &&
+          previous.autoKey === null && candidate.autoKey === null &&
+          Math.abs(previous.nodePosition - candidate.nodePosition) < 1) {
+          // Updating a live anonymous node is not evidence of DOM eviction.
+          retained.delete(previousKey);
+          const index = orderedKeys.indexOf(previousKey);
+          if (index >= 0) {
+            if (orderedKeys.includes(key)) orderedKeys.splice(index, 1);
+            else orderedKeys[index] = key;
+          }
+        }
+        retained.set(key, {
+          html: candidate.html, autoKey: candidate.autoKey,
+          nodePosition: candidate.nodePosition, nodeKey: candidate.nodeKey
+        });
+        nodeKeys.set(candidate.nodeKey, key);
+      }, {
+        preserveDocumentContext: true,
+        onCollected: (keys) => {
+          // Insert new records before the next surviving sibling/context block.
+          // A conclusion seen on the first pass stays after later replies.
+          const known = new Set(orderedKeys);
+          let nextKey: string | undefined;
+          for (const key of [...keys].reverse()) {
+            if (!known.has(key)) {
+              const index = nextKey === undefined ? orderedKeys.length : orderedKeys.indexOf(nextKey);
+              orderedKeys.splice(index, 0, key);
+              known.add(key);
+            }
+            nextKey = key;
+          }
+        }
+      })
+    : null;
+  const evicted = scrolling && [...retained.keys()].some((key) => !scrolling.finalKeys.has(key));
+  let capture: { html: string; selectionApplied: boolean };
+  if (evicted) {
+    // No single live DOM snapshot can contain content evicted by virtualization.
+    capture = {
+      html: '<section data-extractor-scroll-history="true">\n' +
+        orderedKeys.map((key) => retained.get(key)!.html).join("\n") + "\n</section>",
+      selectionApplied: true
+    };
+  } else {
+    capture = serializer
+      ? await extractTraversedDocument(runtime, serializer, includeSelectors)
+      : await extractDocument(runtime.cdp, includeSelectors, runtime.request.excludeSelectors);
+  }
   runtime.bridge.send({
     version: PROTOCOL_VERSION,
     type: "capture_begin",
@@ -117,37 +170,11 @@ async function captureDocument(
     requestId: runtime.requestId,
     payload: {
       ...end,
-      scrollRounds,
+      scrollRounds: scrolling?.scrollRounds ?? 0,
       matchedItems: 0,
       warnings: serializer?.getWarnings() ?? []
     }
   });
-}
-
-async function scrollDocumentToEnd(
-  runtime: CaptureRuntime,
-  includeSelectors: string[]
-): Promise<number> {
-  let idleScrollPasses = 0;
-  let scrollRounds = 0;
-  while (idleScrollPasses < IDLE_SCROLL_PASSES_TO_STOP) {
-    assertCaptureActive(runtime);
-    const advance = await advanceScrollableContainers(
-      runtime.cdp,
-      includeSelectors,
-      runtime.request.scroll.maxDistancePx
-    );
-    if (advance.advancedContainers === 0) {
-      idleScrollPasses += 1;
-    } else {
-      idleScrollPasses = 0;
-      scrollRounds += 1;
-    }
-    if (idleScrollPasses < IDLE_SCROLL_PASSES_TO_STOP) {
-      await waitForDomSettle(runtime.cdp, runtime.request.scroll.settleMs);
-    }
-  }
-  return scrollRounds;
 }
 
 async function captureFeed(
@@ -172,10 +199,13 @@ async function captureFeed(
   });
   await runtime.progress("receiving");
 
-  const { scrollRounds, matchedItems } = await captureAutomaticFeed(
+  const { scrollRounds, matchedItems } = await captureAutomaticContent(
     runtime,
     serializer,
-    includeSelectors
+    includeSelectors,
+    async (key, candidate, isNew) => {
+      if (isNew) await runtime.sender.sendItem(key, candidate.html);
+    }
   );
 
   const end = await runtime.sender.finish();
@@ -192,60 +222,91 @@ async function captureFeed(
   });
 }
 
-async function captureAutomaticFeed(
+async function captureAutomaticContent(
   runtime: CaptureRuntime,
   serializer: TraversalSerializer | null,
-  includeSelectors: string[]
-): Promise<{ scrollRounds: number; matchedItems: number }> {
+  includeSelectors: string[],
+  retain: (key: string, candidate: FeedCandidate, isNew: boolean) => Promise<void>,
+  options?: { preserveDocumentContext: boolean; onCollected: (keys: Set<string>) => void }
+): Promise<{ scrollRounds: number; matchedItems: number; finalKeys: Set<string> }> {
   const seen = new Set<string>();
   let idleScrollPasses = 0;
   let scrollRounds = 0;
   let matchedItems = 0;
+  let finalKeys = new Set<string>();
+  let lastMovementAt = Date.now();
+  const idleObservationMs = Math.min(runtime.request.loadTimeoutMs, Math.max(
+    MINIMUM_IDLE_OBSERVATION_MS,
+    runtime.request.settleMs,
+    runtime.request.scroll.settleMs * 2
+  ));
 
   while (true) {
     assertCaptureActive(runtime);
-    await assertIncludeSelectorsMatch(runtime.cdp, includeSelectors);
+    // Readiness was checked before entering the loop. A virtualizer may briefly
+    // remove all matching items while fetching its next window.
     const candidates = serializer
       ? await collectTraversedFeedCandidates(
           runtime,
           serializer,
-          includeSelectors
+          includeSelectors,
+          options?.preserveDocumentContext
         )
       : await collectFeedCandidates(
           runtime.cdp,
           includeSelectors,
           runtime.request.excludeSelectors,
           runtime.request.scroll.dedupe.attribute,
-          runtime.request.scroll.dedupe.selector
+          runtime.request.scroll.dedupe.selector,
+          options?.preserveDocumentContext
         );
+    finalKeys = new Set();
     for (const candidate of candidates) {
-      const key = await dedupeKey(runtime.request, candidate);
-      if (seen.has(key)) {
-        continue;
+      const key = candidate.isContext
+        ? "context:" + candidate.nodeKey
+        : (options?.preserveDocumentContext ? "content:" : "") + await dedupeKey(runtime.request, candidate);
+      finalKeys.add(key);
+      const isNew = !seen.has(key);
+      if (isNew) {
+        seen.add(key);
+        matchedItems += 1;
       }
-      seen.add(key);
-      await runtime.sender.sendItem(key, candidate.html);
-      matchedItems += 1;
+      await retain(key, candidate, isNew);
     }
+    options?.onCollected(finalKeys);
 
     const advance = await advanceScrollableContainers(
       runtime.cdp,
       includeSelectors,
-      runtime.request.scroll.maxDistancePx
+      runtime.request.scroll.maxDistancePx,
+      runtime.request.excludeSelectors
     );
     if (advance.advancedContainers === 0) {
       idleScrollPasses += 1;
     } else {
       idleScrollPasses = 0;
       scrollRounds += 1;
+      lastMovementAt = Date.now();
     }
     if (idleScrollPasses >= IDLE_SCROLL_PASSES_TO_STOP) {
-      break;
+      const idleMs = Date.now() - lastMovementAt;
+      const pending = runtime.cdp.hasPendingPageRequests();
+      if ((!advance.budgetAvailable && !pending) ||
+        idleMs >= runtime.request.loadTimeoutMs ||
+        (idleMs >= idleObservationMs && !pending)) {
+        break;
+      }
     }
-    await waitForDomSettle(runtime.cdp, runtime.request.scroll.settleMs);
+    const quietMs = advance.advancedContainers > 0
+      ? runtime.request.scroll.settleMs
+      : Math.max(100, runtime.request.scroll.settleMs);
+    await waitForDomSettle(runtime.cdp, quietMs, Math.min(
+      Math.max(250, runtime.request.scroll.settleMs * 2),
+      runtime.deadlineAt - Date.now()
+    ));
   }
 
-  return { scrollRounds, matchedItems };
+  return { scrollRounds, matchedItems, finalKeys };
 }
 
 async function extractTraversedDocument(
@@ -280,18 +341,16 @@ async function extractTraversedDocument(
 async function collectTraversedFeedCandidates(
   runtime: CaptureRuntime,
   serializer: TraversalSerializer,
-  includeSelectors: string[]
-): Promise<Array<{
-  html: string;
-  attributeValue: string | null;
-  link: string | null;
-  autoKey: string | null;
-}>> {
+  includeSelectors: string[],
+  preserveDocumentContext = false
+): Promise<FeedCandidate[]> {
   const references = await collectFeedCandidateReferences(
     runtime.cdp,
     includeSelectors,
     runtime.request.scroll.dedupe.attribute,
-    runtime.request.scroll.dedupe.selector
+    runtime.request.scroll.dedupe.selector,
+    runtime.request.excludeSelectors,
+    preserveDocumentContext
   );
   const excludedNodeIds = await findExcludedNodeIds(
     runtime.cdp,
@@ -309,6 +368,9 @@ async function collectTraversedFeedCandidates(
     }
     candidates.push({
       html,
+      isContext: reference.isContext,
+      nodeKey: reference.nodeKey,
+      nodePosition: reference.nodePosition,
       attributeValue: reference.attributeValue,
       link: reference.link,
       autoKey: reference.autoKey

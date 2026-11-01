@@ -1,11 +1,15 @@
 import { CdpSession } from "./cdp";
+import { collectImageSourcesInPage, resolveImageSource } from "./images";
 import { ExtractorError } from "./protocol";
 
 export interface FeedCandidate {
   html: string;
+  nodeKey: string;
+  nodePosition: number;
   attributeValue: string | null;
   link: string | null;
   autoKey: string | null;
+  isContext?: boolean;
 }
 
 export interface FeedCandidateReference extends Omit<FeedCandidate, "html"> {
@@ -89,11 +93,18 @@ export async function waitForSelector(
   );
 }
 
-export async function waitForDomSettle(cdp: CdpSession, settleMs: number): Promise<void> {
+export async function waitForDomSettle(
+  cdp: CdpSession,
+  settleMs: number,
+  maxWaitMs?: number
+): Promise<void> {
   if (settleMs <= 0) {
     return;
   }
-  await cdp.evaluate<void>(invoke(waitForDomSettleInPage, settleMs));
+  await cdp.evaluate<void>(invoke(waitForDomSettleInPage, {
+    settleMs,
+    maxWaitMs: maxWaitMs === undefined ? null : Math.max(1, maxWaitMs)
+  }));
 }
 
 export async function extractDocument(
@@ -112,7 +123,7 @@ export async function extractDocument(
         includeSelectors,
         excludeSelectors
       },
-      [findNodes, outermostNodes, cloneAndClean]
+      [findNodes, outermostNodes, resolveImageSource, collectImageSourcesInPage, cloneAndClean]
     )
   );
   if (result.matched === 0) {
@@ -173,25 +184,33 @@ export async function collectFeedCandidates(
   includeSelectors: string[],
   excludeSelectors: string[],
   attribute: string | null | undefined,
-  linkSelector: string | null | undefined
+  linkSelector: string | null | undefined,
+  preserveDocumentContext = false
 ): Promise<FeedCandidate[]> {
   return cdp.evaluate<FeedCandidate[]>(
     invoke(collectFeedCandidatesInPage, {
       includeSelectors,
       excludeSelectors,
       attribute: attribute ?? null,
-      linkSelector: linkSelector ?? null
+      linkSelector: linkSelector ?? null,
+      preserveDocumentContext
     }, [
       findNodes,
       outermostNodes,
       inferContentBlocks,
+      selectCaptureBlocks,
       collectMatchingNodes,
       collectRepeatedSiblingNodes,
       structuralSignature,
       hasMeaningfulContent,
+      isExcludedContentNode,
+      contentNodeKey,
+      contentNodePosition,
       fallbackContentNodes,
       preferredLinkForNode,
       automaticKeyForNode,
+      resolveImageSource,
+      collectImageSourcesInPage,
       cloneAndClean
     ])
   );
@@ -201,29 +220,40 @@ export async function collectFeedCandidateReferences(
   cdp: CdpSession,
   includeSelectors: string[],
   attribute: string | null | undefined,
-  linkSelector: string | null | undefined
+  linkSelector: string | null | undefined,
+  excludeSelectors: string[] = [],
+  preserveDocumentContext = false
 ): Promise<FeedCandidateReference[]> {
   const records = await cdp.evaluateNodeRecords<{
     attributeValue: string | null;
     link: string | null;
     autoKey: string | null;
+    nodeKey: string;
+    nodePosition: number;
     contentsOnly: boolean;
+    isContext: boolean;
   }>(
     invoke(
       collectFeedCandidateRecordsInPage,
       {
         includeSelectors,
+        excludeSelectors,
         attribute: attribute ?? null,
-        linkSelector: linkSelector ?? null
+        linkSelector: linkSelector ?? null,
+        preserveDocumentContext
       },
       [
         findNodes,
         outermostNodes,
         inferContentBlocks,
+        selectCaptureBlocks,
         collectMatchingNodes,
         collectRepeatedSiblingNodes,
         structuralSignature,
         hasMeaningfulContent,
+        isExcludedContentNode,
+        contentNodeKey,
+        contentNodePosition,
         fallbackContentNodes,
         preferredLinkForNode,
         automaticKeyForNode
@@ -234,7 +264,10 @@ export async function collectFeedCandidateReferences(
         attributeValue: entry.attributeValue,
         link: entry.link,
         autoKey: entry.autoKey,
-        contentsOnly: entry.contentsOnly
+        nodeKey: entry.nodeKey,
+        nodePosition: entry.nodePosition,
+        contentsOnly: entry.contentsOnly,
+        isContext: entry.isContext
       }));
     }`
   );
@@ -284,14 +317,21 @@ function hasAnySelectorMatchInPage(selectors: string[]): boolean {
   return selectors.some((selector) => document.querySelector(selector) !== null);
 }
 
-function waitForDomSettleInPage(settleMs: number): Promise<void> {
+function waitForDomSettleInPage(options: { settleMs: number; maxWaitMs: number | null }): Promise<void> {
   return new Promise((resolve) => {
-    let timer = window.setTimeout(done, settleMs);
+    let timer = window.setTimeout(done, options.settleMs);
+    const deadlineTimer = options.maxWaitMs === null
+      ? null
+      : window.setTimeout(done, options.maxWaitMs);
     const observer = new MutationObserver(() => {
       window.clearTimeout(timer);
-      timer = window.setTimeout(done, settleMs);
+      timer = window.setTimeout(done, options.settleMs);
     });
     function done(): void {
+      window.clearTimeout(timer);
+      if (deadlineTimer !== null) {
+        window.clearTimeout(deadlineTimer);
+      }
       observer.disconnect();
       resolve();
     }
@@ -341,10 +381,12 @@ function collectFeedCandidatesInPage(options: {
   excludeSelectors: string[];
   attribute: string | null;
   linkSelector: string | null;
+  preserveDocumentContext: boolean;
 }): FeedCandidate[] {
   const scopes = outermostNodes(findNodes(document, options.includeSelectors));
-  return inferContentBlocks(scopes)
-    .map<FeedCandidate | null>((node) => {
+  return selectCaptureBlocks(scopes, options.preserveDocumentContext)
+    .filter(({ node }) => !isExcludedContentNode(node, scopes, options.excludeSelectors))
+    .map<FeedCandidate | null>(({ node, isContext }) => {
       const html = cloneAndClean(
         node,
         options.excludeSelectors,
@@ -353,12 +395,16 @@ function collectFeedCandidatesInPage(options: {
       if (html === null || html.trim() === "") {
         return null;
       }
-      const preferredLink = preferredLinkForNode(node, options.linkSelector);
+      const element = node instanceof Element ? node : null;
+      const preferredLink = element ? preferredLinkForNode(element, options.linkSelector) : null;
       return {
         html,
-        attributeValue: options.attribute ? node.getAttribute(options.attribute) : null,
+        nodeKey: contentNodeKey(node),
+        nodePosition: contentNodePosition(node),
+        attributeValue: options.attribute && element ? element.getAttribute(options.attribute) : null,
         link: preferredLink?.href ?? null,
-        autoKey: automaticKeyForNode(node, preferredLink)
+        autoKey: element ? automaticKeyForNode(element, preferredLink, options.linkSelector !== null) : null,
+        isContext
       };
     })
     .filter((value): value is FeedCandidate => value !== null);
@@ -366,38 +412,114 @@ function collectFeedCandidatesInPage(options: {
 
 function collectFeedCandidateRecordsInPage(options: {
   includeSelectors: string[];
+  excludeSelectors: string[];
   attribute: string | null;
   linkSelector: string | null;
+  preserveDocumentContext: boolean;
 }): Array<{
-  node: Element;
+  node: Element | Text;
   attributeValue: string | null;
   link: string | null;
   autoKey: string | null;
+  nodeKey: string;
+  nodePosition: number;
   contentsOnly: boolean;
+  isContext: boolean;
 }> {
   const scopes = outermostNodes(findNodes(document, options.includeSelectors));
-  return inferContentBlocks(scopes).map((node) => {
-    const preferredLink = preferredLinkForNode(node, options.linkSelector);
-    return {
-      node,
-      attributeValue: options.attribute ? node.getAttribute(options.attribute) : null,
-      link: preferredLink?.href ?? null,
-      autoKey: automaticKeyForNode(node, preferredLink),
-      contentsOnly: node === document.body
-    };
+  return selectCaptureBlocks(scopes, options.preserveDocumentContext)
+    .filter(({ node }) => !isExcludedContentNode(node, scopes, options.excludeSelectors))
+    .map(({ node, isContext }) => {
+      const element = node instanceof Element ? node : null;
+      const preferredLink = element ? preferredLinkForNode(element, options.linkSelector) : null;
+      return {
+        node,
+        nodeKey: contentNodeKey(node),
+        nodePosition: contentNodePosition(node),
+        attributeValue: options.attribute && element ? element.getAttribute(options.attribute) : null,
+        link: preferredLink?.href ?? null,
+        autoKey: element ? automaticKeyForNode(element, preferredLink, options.linkSelector !== null) : null,
+        contentsOnly: node === document.body,
+        isContext
+      };
+    });
+}
+
+function isExcludedContentNode(node: Element | Text, scopes: Element[], selectors: string[]): boolean {
+  const element = node instanceof Element ? node : node.parentElement;
+  return selectors.some((selector) => {
+    const excluded = element?.closest(selector);
+    return excluded != null && scopes.some((scope) => scope.contains(excluded));
   });
+}
+
+function contentNodeKey(node: Node): string {
+  const holder = globalThis as typeof globalThis & {
+    __browserExtractorContentNodes?: { nodes: WeakMap<Node, number>; nextId: number };
+  };
+  const registry = holder.__browserExtractorContentNodes ??= { nodes: new WeakMap(), nextId: 1 };
+  let id = registry.nodes.get(node);
+  if (id === undefined) {
+    id = registry.nextId++;
+    registry.nodes.set(node, id);
+  }
+  return String(id);
+}
+
+function contentNodePosition(node: Element | Text): number {
+  const element = node instanceof Element ? node : node.parentElement;
+  if (!element) return 0;
+  const documentScroller = document.scrollingElement;
+  let top = element.getBoundingClientRect().top + (documentScroller?.scrollTop ?? window.scrollY);
+  for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    if (ancestor !== documentScroller) top += ancestor.scrollTop;
+  }
+  return top;
+}
+
+function selectCaptureBlocks(
+  scopes: Element[],
+  preserveDocumentContext: boolean
+): Array<{ node: Element | Text; isContext: boolean }> {
+  const inferred = inferContentBlocks(scopes);
+  if (!preserveDocumentContext) return inferred.map((node) => ({ node, isContext: false }));
+  const blocks = new Set(outermostNodes(inferred));
+  const ancestors = new Set<Element>();
+  for (const block of blocks) {
+    for (let parent = block.parentElement; parent; parent = parent.parentElement) ancestors.add(parent);
+  }
+  const result: Array<{ node: Element | Text; isContext: boolean }> = [];
+  function visit(node: Node): void {
+    if (node instanceof Element) {
+      if (blocks.has(node)) {
+        result.push({ node, isContext: false });
+      } else if (!ancestors.has(node)) {
+        // Preserve whole uncovered subtrees, including inline formatting,
+        // frame owners and hosts whose content lives in a Shadow Root.
+        result.push({ node, isContext: true });
+      } else {
+        for (const child of node.childNodes) visit(child);
+      }
+    } else if (node instanceof Text && node.data.trim()) {
+      result.push({ node, isContext: true });
+    }
+  }
+  for (const scope of scopes) visit(scope);
+  return result;
 }
 
 function inferContentBlocks(scopes: Element[]): Element[] {
   const selected = new Set<Element>();
-  const itemSelector = [
+  const semanticSelector = [
     "article",
     "li",
     "table",
     "tr",
     '[role="article"]',
     '[role="listitem"]',
-    '[role="row"]',
+    '[role="row"]'
+  ].join(",");
+  const identitySelector = [
     "[data-post-id]",
     "[data-item-id]",
     "[data-id]",
@@ -426,11 +548,25 @@ function inferContentBlocks(scopes: Element[]): Element[] {
   ].join(",");
 
   for (const scope of scopes) {
-    const itemNodes = outermostNodes(
-      collectMatchingNodes(scope, itemSelector).filter(hasMeaningfulContent)
+    const semanticNodes = outermostNodes(
+      collectMatchingNodes(scope, semanticSelector).filter(hasMeaningfulContent)
     );
+    const repeatedCandidates = outermostNodes(
+      collectRepeatedSiblingNodes(scope).filter((candidate) =>
+        !semanticNodes.some((node) => node.contains(candidate) || candidate.contains(node))
+      )
+    );
+    const identifiedNodes = outermostNodes(
+      collectMatchingNodes(scope, identitySelector).filter((candidate) =>
+        hasMeaningfulContent(candidate) &&
+        !semanticNodes.some((node) => node.contains(candidate) || candidate.contains(node)) &&
+        !repeatedCandidates.some((node) => node !== candidate &&
+          (node.contains(candidate) || candidate.contains(node)))
+      )
+    );
+    const itemNodes = [...semanticNodes, ...identifiedNodes];
     const repeatedNodes = outermostNodes(
-      collectRepeatedSiblingNodes(scope).filter(
+      repeatedCandidates.filter(
         (candidate) =>
           !itemNodes.some(
             (item) => item.contains(candidate) || candidate.contains(item)
@@ -558,16 +694,43 @@ function preferredLinkForNode(
 
 function automaticKeyForNode(
   node: Element,
-  preferredLink: HTMLAnchorElement | null
+  preferredLink: HTMLAnchorElement | null,
+  explicitLinkSelector: boolean
 ): string | null {
-  return (
-    node.getAttribute("data-post-id") ??
-    node.getAttribute("data-item-id") ??
-    node.getAttribute("data-id") ??
-    node.getAttribute("data-key") ??
-    preferredLink?.href ??
-    null
-  );
+  for (const attribute of ["data-post-id", "data-item-id"]) {
+    const value = node.getAttribute(attribute)?.trim();
+    if (value) {
+      return attribute + ":" + value;
+    }
+  }
+  if (explicitLinkSelector) {
+    return preferredLink?.href ?? null;
+  }
+  function ownLink(link: Element | null): string | null {
+    if (!(link instanceof HTMLAnchorElement) || !node.contains(link) ||
+      !link.getAttribute("href")?.trim() || !["http:", "https:"].includes(link.protocol)) {
+      return null;
+    }
+    const owner = link.closest("article,li,[role='article'],[role='listitem']");
+    return owner && owner !== node && node.contains(owner) ? null : link.href;
+  }
+  if (node instanceof HTMLAnchorElement) {
+    return ownLink(node);
+  }
+  for (const bookmark of node.querySelectorAll("a[rel~='bookmark'][href]")) {
+    const link = ownLink(bookmark);
+    if (link) return link;
+  }
+  for (const time of node.querySelectorAll("time")) {
+    const link = ownLink(time.closest("a[href]"));
+    if (link) return link;
+  }
+  for (const attribute of ["data-id", "data-key"]) {
+    const value = node.getAttribute(attribute)?.trim();
+    if (value) return attribute + ":" + value;
+  }
+  // Author, navigation and action links cannot identify the enclosing content.
+  return null;
 }
 
 function findNodes(root: ParentNode, selectors: string[]): Element[] {
@@ -583,7 +746,7 @@ function findNodes(root: ParentNode, selectors: string[]): Element[] {
   });
 }
 
-function outermostNodes(nodes: Element[]): Element[] {
+export function outermostNodes(nodes: Element[]): Element[] {
   const unique = [...new Set(nodes)];
   const selected = new Set(unique);
   return unique.filter((candidate) => {
@@ -599,18 +762,43 @@ function outermostNodes(nodes: Element[]): Element[] {
 }
 
 function cloneAndClean(
-  node: Element,
+  node: Element | Text,
   excluded: string[],
   contentsOnly = false
 ): string | null {
+  if (node instanceof Text) {
+    return node.data.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
   const selectors = ["script", "style", "noscript", "template", ...excluded];
   if (selectors.some((selector) => node.matches(selector))) {
     return null;
   }
-  const clone = node.cloneNode(true) as Element;
-  for (const selector of selectors) {
-    for (const unwanted of clone.querySelectorAll(selector)) {
-      unwanted.remove();
+  const sources = collectImageSourcesInPage(node);
+  // An inert owner document prevents src updates from initiating image requests.
+  const clone = node.ownerDocument.implementation.createHTMLDocument("").importNode(node, true);
+  const images = [...clone.querySelectorAll("img")];
+  if (clone.localName === "img") {
+    images.unshift(clone as HTMLImageElement);
+  }
+  // Match all exclusions against the original attributes and structure before
+  // either image recovery or removals can change later selector matches.
+  const unwanted = new Set(selectors.flatMap((selector) => [...clone.querySelectorAll(selector)]));
+  for (const element of unwanted) element.remove();
+  for (let index = 0; index < images.length; index += 1) {
+    const source = sources[index]?.source;
+    if (source && (images[index] === clone || clone.contains(images[index]!))) {
+      const image = images[index]!;
+      image.setAttribute("src", source);
+      image.removeAttribute("srcset");
+      image.removeAttribute("sizes");
+      if (image.parentElement?.localName === "picture") {
+        for (const child of image.parentElement.children) {
+          if (child.localName === "source") {
+            child.removeAttribute("srcset");
+            child.removeAttribute("sizes");
+          }
+        }
+      }
     }
   }
   return contentsOnly ? clone.innerHTML : clone.outerHTML;

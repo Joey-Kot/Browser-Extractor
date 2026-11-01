@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>Background thread</title></head>
+  <body>
+    <main>
+      <article data-post-id="main" style="min-height:800px"><p>Main post</p></article>
+      <div id="reply-loader" style="height:32px">Replies load when visible</div>
+    </main>
+    <script>
+      const main = document.querySelector('main');
+      const post = main.querySelector('article');
+      post.dataset.startedHidden = String(document.hidden);
+      post.dataset.startedFocused = String(document.hasFocus());
+      const observer = new IntersectionObserver((entries) => {
+        if (!entries.some(entry => entry.isIntersecting) ||
+            document.hidden || !document.hasFocus()) return;
+        observer.disconnect();
+        requestAnimationFrame(async () => {
+          await fetch('/replies');
+          for (const id of ['reply-one', 'reply-two']) {
+            const reply = document.createElement('article');
+            reply.dataset.postId = id;
+            reply.style.minHeight = '160px';
+            reply.textContent = id;
+            main.append(reply);
+          }
+          document.querySelector('#reply-loader').remove();
+        });
+      });
+      observer.observe(document.querySelector('#reply-loader'));
+    </script>
+  </body>
+</html>
