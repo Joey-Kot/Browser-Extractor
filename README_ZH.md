@@ -318,7 +318,7 @@ Chrome 开发模式应加载生成后的 `extension/dist/` 目录。
 
 ## 命令行客户端
 
-`scrape` 是只负责网页抓取的单一命令，不包含子命令。它会提交一次抓取请求，在收到 `202 Accepted` 后自动轮询到任务终态，并把完成后的 Markdown 写入新的本地文件。使用前需要确保守护程序已经运行，扩展也已连接。
+`scrape` 提交一次抓取请求，收到 `202 Accepted` 后自动轮询到任务结束，再把 Markdown 写入新的本地文件。抓取前需要启动守护程序并连接扩展。
 
 ### CLI 环境变量
 
@@ -352,15 +352,41 @@ set "EXTRACTOR_API_KEY=your-api-token"
 
 CLI 会在发送请求和创建输出文件之前校验 `EXTRACTOR_API_KEY`。`scrape --help` 的末尾也会列出这两个环境变量和最小调用示例。
 
+### Shell 自动补全
+
+把 `scrape` 加入 `PATH`，将对应命令添加到 Shell 启动文件，再打开新的会话。补全在本地运行，配置 API 密钥前即可使用。
+
+```bash
+# Bash（~/.bashrc）
+eval "$(scrape completion bash)"
+
+# Zsh（~/.zshrc，放在 compinit 之后）
+eval "$(scrape completion zsh)"
+```
+
+如果 Zsh 尚未初始化补全，在上述 Zsh 命令之前添加 `autoload -Uz compinit && compinit`。
+
+```fish
+# Fish（~/.config/fish/config.fish）
+scrape completion fish | source
+```
+
+```powershell
+# PowerShell（$PROFILE）
+scrape completion powershell | Out-String | Invoke-Expression
+```
+
+```elvish
+# Elvish（rc.elv）
+eval (scrape completion elvish | slurp)
+```
+
 ### CLI 基本请求
 
 CLI 默认使用 feed 模式。即使没有指定滚动参数，也会自动发现文档及选中范围内的纵向滚动容器，逐步滚动、收集当前内容块并拼接去重：
 
 ```bash
-scrape \
-  --url https://example.com/feed \
-  --output example-feed \
-  --path ./Temp-Scrape
+scrape -u https://example.com/feed -o example-feed -p ./Temp-Scrape
 ```
 
 document 模式输出一份文档。如果没有提供 `--scroll-px`，它只取一次快照；开启滚动后，若旧内容被卸载，会保留并合并这些内容块：
@@ -377,17 +403,17 @@ scrape \
 
 | 参数 | 必填/默认值 | 作用 |
 |---|---|---|
-| `--url <URL>` | 必填 | 目标 HTTP 或 HTTPS URL。 |
-| `--output <NAME>` | 必填 | 输出文件名；未带 `.md` 时自动补充。目录部分会被丢弃，应使用 `--path` 指定目录。 |
-| `--path <PATH>` | `.` | 输出目录，支持相对路径和绝对路径；抓取成功后如有需要会自动创建。 |
-| `--mode <feed\|document>` | `feed` | 抓取模式。feed 模式始终开启滚动。 |
-| `--include-tag <SELECTOR>` | 可重复，默认为空 | 顶层包含选择器。省略或清理后为空时，由服务端使用 `body`。 |
-| `--exclude-tag <SELECTOR>` | 可重复，默认为空 | 追加到内置排除列表，然后稳定去重。 |
+| `-u, --url <URL>` | 必填 | 目标 HTTP 或 HTTPS URL。 |
+| `-o, --output <NAME>` | 必填 | 输出文件名；未带 `.md` 时自动补充。目录部分会被丢弃，应使用 `--path` 指定目录。 |
+| `-p, --path <PATH>` | `.` | 输出目录，支持相对路径和绝对路径；抓取成功后如有需要会自动创建。 |
+| `-m, --mode <feed\|document>` | `feed` | 抓取模式。feed 模式始终开启滚动。 |
+| `-i, --include-tag <SELECTOR>` | 可重复，默认为空 | 顶层包含选择器。省略或清理后为空时，由服务端使用 `body`。 |
+| `-e, --exclude-tag <SELECTOR>` | 可重复，默认为空 | 追加到内置排除列表，然后稳定去重。 |
 | `--empty-tags` | 关闭 | 无条件清空内置排除列表，但保留 `--exclude-tag`。 |
-| `--scroll-px <PIXELS>` | 服务端默认最大 60000 | 设置每个自动发现的滚动容器允许滚动的最大累计距离，必须大于 0，并自动开启滚动。 |
+| `-s, --scroll-px <PIXELS>` | 服务端默认最大 60000 | 设置每个自动发现的滚动容器允许滚动的最大累计距离，必须大于 0，并自动开启滚动。 |
 | `--timeout <SECONDS>` | `120` | CLI 到守护程序的每次 HTTP 请求超时，单位为秒。 |
 | `--scrape-timeout <SECONDS>` | 服务端默认值 | 服务端任务硬超时。CLI 会把秒转换成 `jobTimeoutMs`。 |
-| `--wait-load <SECONDS>` | 服务端默认 `1` | 采集前等待 DOM 连续保持稳定的时间，单位为秒。CLI 转换为 `settleMs`；`0` 表示跳过这次等待。 |
+| `-w, --wait-load <SECONDS>` | 服务端默认 `1` | 采集前等待 DOM 连续保持稳定的时间，单位为秒。CLI 转换为 `settleMs`；`0` 表示跳过这次等待。 |
 | `--shadow-dom <DEPTH>` | 关闭 | 开启 Shadow DOM 穿透，并将正整数设为 `maxDepth`。 |
 | `--iframes <DEPTH>` | 关闭 | 开启同源和跨域 iframe 穿透，并将正整数设为 `maxDepth`。 |
 | `--verify-ssl` | 关闭 | 校验 HTTPS `EXTRACTOR_BASE_URL` 的证书和主机名。默认接受本地或自签名守护程序证书，不影响目标网页的 TLS。 |
@@ -527,7 +553,7 @@ url: "https://example.com/final"
 # 转换后的 Markdown 正文
 ```
 
-为了方便 shell Agent 使用，标准输出保持紧凑。成功时只输出：
+抓取成功时，标准输出只有一行。
 
 ```text
 true

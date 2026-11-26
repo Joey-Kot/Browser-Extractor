@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::Parser;
+use clap::{Parser, ValueHint};
 use url::Url;
 
 use crate::{
@@ -48,23 +48,24 @@ Example:
 )]
 pub struct Cli {
     /// Target HTTP or HTTPS URL.
-    #[arg(long, value_name = "URL")]
+    #[arg(short, long, value_name = "URL")]
     pub url: String,
 
     /// Output file name. A .md suffix is added when omitted.
-    #[arg(long, value_name = "NAME")]
+    #[arg(short, long, value_name = "NAME")]
     pub output: String,
 
     /// Output directory. Supports relative and absolute paths.
-    #[arg(long, value_name = "PATH", default_value = ".")]
+    #[arg(short, long, value_name = "PATH", value_hint = ValueHint::DirPath, default_value = ".")]
     pub path: PathBuf,
 
     /// Extraction mode.
-    #[arg(long, value_enum, default_value_t = ExtractionMode::Feed)]
+    #[arg(short, long, value_enum, default_value_t = ExtractionMode::Feed)]
     pub mode: ExtractionMode,
 
     /// CSS selector to include. Repeat this option for multiple selectors.
     #[arg(
+        short,
         long = "include-tag",
         visible_alias = "include-tags",
         value_name = "SELECTOR"
@@ -73,6 +74,7 @@ pub struct Cli {
 
     /// Additional CSS selector to exclude. Repeat this option for multiple selectors.
     #[arg(
+        short,
         long = "exclude-tag",
         visible_alias = "exclude-tags",
         value_name = "SELECTOR"
@@ -84,7 +86,7 @@ pub struct Cli {
     pub empty_tags: bool,
 
     /// Maximum scroll distance per automatically detected container, in pixels.
-    #[arg(long = "scroll-px", value_name = "PIXELS")]
+    #[arg(short = 's', long = "scroll-px", value_name = "PIXELS")]
     pub max_scroll_px: Option<u32>,
 
     /// Timeout for each CLI HTTP request, in seconds.
@@ -97,7 +99,7 @@ pub struct Cli {
 
     /// DOM quiet period before collection, in seconds (API settleMs).
     /// Defaults to the server setting (1 second); 0 skips this wait.
-    #[arg(long, value_name = "SECONDS")]
+    #[arg(short, long, value_name = "SECONDS")]
     pub wait_load: Option<u64>,
 
     /// Enable Shadow DOM traversal with the given maximum depth.

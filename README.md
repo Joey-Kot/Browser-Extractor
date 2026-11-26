@@ -318,7 +318,7 @@ Chrome development mode loads the generated `extension/dist/` directory.
 
 ## Command-line client
 
-`scrape` is a single-purpose scraping command with no subcommands. It submits one extraction, automatically polls any `202 Accepted` job until it reaches a terminal state, and writes the completed Markdown to a new local file. The daemon and extension must already be running and connected.
+`scrape` submits one extraction, automatically polls any `202 Accepted` job until it reaches a terminal state, and writes the completed Markdown to a new local file. The daemon and extension must already be running and connected for extraction requests.
 
 ### CLI environment
 
@@ -352,15 +352,41 @@ set "EXTRACTOR_API_KEY=your-api-token"
 
 `EXTRACTOR_API_KEY` is validated before any request is sent or output file is created. `scrape --help` repeats both environment variables and a minimal invocation at the end of its usage text.
 
+### Shell completion
+
+With `scrape` on `PATH`, add the line for your shell to its startup file and open a new session. Completion runs locally and is available before you configure the API key.
+
+```bash
+# Bash (~/.bashrc)
+eval "$(scrape completion bash)"
+
+# Zsh (~/.zshrc, after compinit)
+eval "$(scrape completion zsh)"
+```
+
+If Zsh completion has yet to be initialized, add `autoload -Uz compinit && compinit` before the Zsh line.
+
+```fish
+# Fish (~/.config/fish/config.fish)
+scrape completion fish | source
+```
+
+```powershell
+# PowerShell ($PROFILE)
+scrape completion powershell | Out-String | Invoke-Expression
+```
+
+```elvish
+# Elvish (rc.elv)
+eval (scrape completion elvish | slurp)
+```
+
 ### Basic CLI requests
 
 Feed mode is the CLI default. It automatically discovers the document and eligible vertical scroll containers inside the selected roots, then scrolls, collects, stitches, and deduplicates content blocks:
 
 ```bash
-scrape \
-  --url https://example.com/feed \
-  --output example-feed \
-  --path ./Temp-Scrape
+scrape -u https://example.com/feed -o example-feed -p ./Temp-Scrape
 ```
 
 Use document mode for one document result. It does not scroll unless `--scroll-px` is present; when scrolling evicts earlier content, those blocks are retained and merged:
@@ -377,17 +403,17 @@ scrape \
 
 | Option | Required/default | Meaning |
 |---|---|---|
-| `--url <URL>` | required | Target HTTP or HTTPS URL. |
-| `--output <NAME>` | required | Output file name. `.md` is appended when omitted. Directory components are discarded; use `--path` for the directory. |
-| `--path <PATH>` | `.` | Relative or absolute output directory. It is created after a successful extraction when necessary. |
-| `--mode <feed\|document>` | `feed` | Extraction mode. Feed mode always enables scrolling. |
-| `--include-tag <SELECTOR>` | repeatable, empty | Top-level include selector. If omitted or empty after trimming, the server uses `body`. |
-| `--exclude-tag <SELECTOR>` | repeatable, empty | Additional exclusion appended to the built-in exclude set and deduplicated. |
+| `-u, --url <URL>` | required | Target HTTP or HTTPS URL. |
+| `-o, --output <NAME>` | required | Output file name. `.md` is appended when omitted. Directory components are discarded; use `--path` for the directory. |
+| `-p, --path <PATH>` | `.` | Relative or absolute output directory. It is created after a successful extraction when necessary. |
+| `-m, --mode <feed\|document>` | `feed` | Extraction mode. Feed mode always enables scrolling. |
+| `-i, --include-tag <SELECTOR>` | repeatable, empty | Top-level include selector. If omitted or empty after trimming, the server uses `body`. |
+| `-e, --exclude-tag <SELECTOR>` | repeatable, empty | Additional exclusion appended to the built-in exclude set and deduplicated. |
 | `--empty-tags` | off | Unconditionally clears the built-in exclude set while preserving `--exclude-tag`. |
-| `--scroll-px <PIXELS>` | server default maximum 60000 | Sets the maximum cumulative distance for each automatically detected scroll container; must be greater than zero and enables scrolling. |
+| `-s, --scroll-px <PIXELS>` | server default maximum 60000 | Sets the maximum cumulative distance for each automatically detected scroll container; must be greater than zero and enables scrolling. |
 | `--timeout <SECONDS>` | `120` | Timeout for each CLI-to-daemon HTTP request. |
 | `--scrape-timeout <SECONDS>` | server default | Server-side hard job deadline. The CLI converts seconds to `jobTimeoutMs`. |
-| `--wait-load <SECONDS>` | server default: `1` | DOM quiet period before collection. The CLI converts seconds to `settleMs`; `0` skips this wait. |
+| `-w, --wait-load <SECONDS>` | server default: `1` | DOM quiet period before collection. The CLI converts seconds to `settleMs`; `0` skips this wait. |
 | `--shadow-dom <DEPTH>` | disabled | Enables Shadow DOM traversal with this positive `maxDepth`. |
 | `--iframes <DEPTH>` | disabled | Enables same-origin and cross-origin iframe traversal with this positive `maxDepth`. |
 | `--verify-ssl` | off | Verifies the certificate and host name of an HTTPS `EXTRACTOR_BASE_URL`. By default the CLI accepts local/self-signed daemon certificates. It does not affect target-page TLS. |
@@ -527,7 +553,7 @@ url: "https://example.com/final"
 # Converted Markdown body
 ```
 
-Standard output is intentionally compact for shell agents:
+A successful extraction writes a single line to standard output.
 
 ```text
 true
