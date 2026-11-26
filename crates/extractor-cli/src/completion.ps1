@@ -1,6 +1,3 @@
-# Adapted from Serper. Copyright (c) 2026 Joey Kot <joey.kot.x@gmail.com>.
-# MIT license text is available in THIRD_PARTY_LICENSES/MIT.txt.
-
 Register-ArgumentCompleter -Native -CommandName 'scrape' -ScriptBlock {
     param($wordToComplete, $commandAst, $cursorPosition)
 
